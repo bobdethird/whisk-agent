@@ -4,8 +4,8 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
 from apriltag import apriltag
 
-TAG_SIZE_M = 0.10
-CALIB_FILE = "camera_calib.npz"
+TAG_SIZE_M = 0.027
+CALIB_FILE = "iphone_ultrawide_camera_calib.npz"
 PLOT_EVERY = 3  # redraw the 3D view every N camera frames
 
 calib = np.load(CALIB_FILE)
