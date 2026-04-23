@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 
 PATTERN = (9, 6)          # internal corners (cols, rows). Use an asymmetric size.
-CAMERA_INDEX = 2
+CAMERA_INDEX = 0
 MIN_FRAMES = 15
 OUTPUT_FILE = "camera_calib.npz"
 
