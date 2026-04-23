@@ -12,6 +12,8 @@ Usage:
 import cv2
 import numpy as np
 
+from camera_utils import disable_autofocus
+
 PATTERN = (9, 6)          # internal corners (cols, rows). Use an asymmetric size.
 CAMERA_INDEX = 0
 MIN_FRAMES = 15
@@ -35,6 +37,7 @@ imgpoints: list[np.ndarray] = []
 cap = cv2.VideoCapture(CAMERA_INDEX)
 if not cap.isOpened():
     raise SystemExit(f"failed to open camera {CAMERA_INDEX}")
+disable_autofocus(cap, label="calibrate")
 
 print(__doc__)
 image_size: tuple[int, int] | None = None
