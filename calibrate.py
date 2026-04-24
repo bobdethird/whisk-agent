@@ -15,7 +15,7 @@ import numpy as np
 from camera_utils import disable_autofocus
 
 PATTERN = (9, 6)          # internal corners (cols, rows). Use an asymmetric size.
-CAMERA_INDEX = 0
+CAMERA_INDEX = 1
 MIN_FRAMES = 15
 OUTPUT_FILE = "camera_calib.npz"
 
@@ -90,7 +90,7 @@ rms, K, dist, rvecs, tvecs = cv2.calibrateCamera(
 per_view = []
 for i in range(len(objpoints)):
     proj, _ = cv2.projectPoints(objpoints[i], rvecs[i], tvecs[i], K, dist)
-    per_view.append(cv2.norm(imgpoints[i], proj, cv2.NORM_L2) / len(proj))
+    per_view.append(cv2.norm(imgpoints[i], proj, cv2.NORM_L2) / np.sqrt(len(proj)))
 
 print(f"overall RMS reprojection error : {rms:.4f} px")
 print(f"mean per-view reprojection err : {np.mean(per_view):.4f} px")

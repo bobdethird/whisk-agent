@@ -104,6 +104,8 @@ ARM_LINK_CHAIN = [
     "gripper_frame_link",
 ]
 VIZ_EVERY = 3                 # refresh 3D arm viz every N camera frames
+VIZ_FIT_MARGIN_M = 0.06       # padding around robot/tag in the live 3D view
+VIZ_MIN_AXIS_SPAN_M = 0.18    # avoid excessive zoom before all points are known
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +288,35 @@ def _draw_tag(ax, T_base_tag: np.ndarray, tag_id: int, tag_size_m: float,
             f"  {label_prefix}id={tag_id}", fontsize=9, color=edge_color, weight="bold")
 
 
+def _tag_corners(T_base_tag: np.ndarray, tag_size_m: float) -> np.ndarray:
+    half = tag_size_m / 2.0
+    local = np.array([
+        [-half,  half, 0.0],
+        [ half,  half, 0.0],
+        [ half, -half, 0.0],
+        [-half, -half, 0.0],
+    ])
+    return (T_base_tag[:3, :3] @ local.T).T + T_base_tag[:3, 3]
+
+
+def _fit_axes_to_points(
+    ax,
+    points: list[np.ndarray],
+    margin_m: float = VIZ_FIT_MARGIN_M,
+    min_axis_span_m: float = VIZ_MIN_AXIS_SPAN_M,
+) -> None:
+    pts = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+    lo = pts.min(axis=0)
+    hi = pts.max(axis=0)
+    center = (lo + hi) / 2.0
+    span = np.maximum(hi - lo + margin_m * 2.0, min_axis_span_m)
+
+    ax.set_xlim(center[0] - span[0] / 2.0, center[0] + span[0] / 2.0)
+    ax.set_ylim(center[1] - span[1] / 2.0, center[1] + span[1] / 2.0)
+    ax.set_zlim(center[2] - span[2] / 2.0, center[2] + span[2] / 2.0)
+    ax.set_box_aspect(tuple(span))
+
+
 def _refresh_arm_viz(
     ax,
     link_poses: dict[str, np.ndarray],
@@ -306,15 +337,12 @@ def _refresh_arm_viz(
     A dashed line between them is the hand-eye calibration error.
     """
     ax.cla()
-    ax.set_xlim(-0.3, 0.5)
-    ax.set_ylim(-0.4, 0.4)
-    ax.set_zlim(0.0, 0.6)
-    ax.set_box_aspect((0.8, 0.8, 0.6))
     ax.set_xlabel("X (m)")
     ax.set_ylabel("Y (m)")
     ax.set_zlabel("Z up (m)")
     ax.set_title("SO-101: tag is fixed; FK vs PnP camera disagreement = calib error")
 
+    fit_points: list[np.ndarray] = [np.zeros(3, dtype=np.float64)]
     _draw_triad(ax, np.eye(4), scale=0.08, label="base")
 
     chain_positions: list[np.ndarray] = []
@@ -323,6 +351,7 @@ def _refresh_arm_viz(
         if T is None:
             continue
         chain_positions.append(T[:3, 3])
+        fit_points.append(T[:3, 3])
         _draw_triad(ax, T, scale=0.03, label=name.replace("_link", ""))
 
     if len(chain_positions) >= 2:
@@ -333,16 +362,19 @@ def _refresh_arm_viz(
     # Stationary tag at the anchor. This doesn't move between frames.
     if anchor_tag is not None:
         anchor_id, anchor_T = anchor_tag
+        fit_points.extend(_tag_corners(anchor_T, tag_size_m))
         _draw_tag(ax, anchor_T, anchor_id, tag_size_m,
                   face_color="cornflowerblue", edge_color="navy", alpha=0.5)
 
     # "FK camera" -- where we currently think the camera is.
     if T_base_camera_fk is not None:
+        fit_points.append(T_base_camera_fk[:3, 3])
         _draw_camera_frustum(ax, T_base_camera_fk, depth=0.05, scale=0.03,
                              color="dimgray", label="FK cam")
 
     # "PnP camera" -- where reality says the camera is (given stationary tag).
     if T_base_camera_pnp is not None:
+        fit_points.append(T_base_camera_pnp[:3, 3])
         _draw_camera_frustum(ax, T_base_camera_pnp, depth=0.05, scale=0.03,
                              color="crimson", label="PnP cam")
 
@@ -356,6 +388,8 @@ def _refresh_arm_viz(
         error_mm = float(
             np.linalg.norm(T_base_camera_fk[:3, 3] - T_base_camera_pnp[:3, 3]) * 1000.0
         )
+
+    _fit_axes_to_points(ax, fit_points)
 
     lines = [f"captures: {capture_count}"]
     if anchor_tag is not None:

@@ -26,8 +26,8 @@ from detector import TAG_SIZE_M, TagDetection, detect_tags, make_detector, rende
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-IPHONE_CAMERA_INDEX = 3
-IPHONE_CALIB_FILE = "iphone_ultrawide_camera_calib.npz"
+IPHONE_CAMERA_INDEX = 1
+IPHONE_CALIB_FILE = "camera_calib.npz"
 CAMERA_BUFFER_SIZE = 1
 
 # World frame:

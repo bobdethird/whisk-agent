@@ -112,6 +112,9 @@ STATS_WINDOW = 60
 # 3D viz refresh cadence (every N camera frames).
 VIZ_EVERY = 3
 
+VIZ_FIT_MARGIN_M = 0.06       # padding around robot/tag in the live 3D view
+VIZ_MIN_AXIS_SPAN_M = 0.18    # avoid excessive zoom before all points are known
+
 PREVIEW_WINDOW = "wrist extrinsic (tag frame)"
 
 
@@ -189,6 +192,7 @@ def _open_camera(index: int, expected_size: tuple[int, int]) -> cv2.VideoCapture
     ok, frame = cap.read()
     if not ok:
         raise SystemExit(f"wrist camera at index {index} returned no frame")
+    frame = cv2.rotate(frame, cv2.ROTATE_180)
     h, w = frame.shape[:2]
     if (w, h) != expected_size:
         raise SystemExit(
@@ -336,6 +340,35 @@ def _draw_tag_patch(
     _draw_triad(ax, T_tag_tag, scale=tag_size_m * 0.8, label="tag (origin)")
 
 
+def _tag_corners(T_tag_tag: np.ndarray, tag_size_m: float) -> np.ndarray:
+    half = tag_size_m / 2.0
+    local = np.array([
+        [-half,  half, 0.0],
+        [ half,  half, 0.0],
+        [ half, -half, 0.0],
+        [-half, -half, 0.0],
+    ])
+    return (T_tag_tag[:3, :3] @ local.T).T + T_tag_tag[:3, 3]
+
+
+def _fit_axes_to_points(
+    ax,
+    points: list[np.ndarray],
+    margin_m: float = VIZ_FIT_MARGIN_M,
+    min_axis_span_m: float = VIZ_MIN_AXIS_SPAN_M,
+) -> None:
+    pts = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+    lo = pts.min(axis=0)
+    hi = pts.max(axis=0)
+    center = (lo + hi) / 2.0
+    span = np.maximum(hi - lo + margin_m * 2.0, min_axis_span_m)
+
+    ax.set_xlim(center[0] - span[0] / 2.0, center[0] + span[0] / 2.0)
+    ax.set_ylim(center[1] - span[1] / 2.0, center[1] + span[1] / 2.0)
+    ax.set_zlim(center[2] - span[2] / 2.0, center[2] + span[2] / 2.0)
+    ax.set_box_aspect(tuple(span))
+
+
 def _refresh_tag_frame_viz(
     ax,
     T_tag_base: np.ndarray | None,
@@ -347,24 +380,23 @@ def _refresh_tag_frame_viz(
     joint_deg: np.ndarray | None,
 ) -> None:
     ax.cla()
-    # Fit a generous box around the SO-101 workspace (~half a metre).
-    ax.set_xlim(-0.6, 0.6)
-    ax.set_ylim(-0.6, 0.6)
-    ax.set_zlim(-0.1, 0.8)
-    ax.set_box_aspect((1.2, 1.2, 0.9))
     ax.set_xlabel("X_tag (m)")
     ax.set_ylabel("Y_tag (m)")
     ax.set_zlabel("Z_tag (m)")
     ax.set_title("everything in the tag frame (tag at origin)")
 
+    fit_points: list[np.ndarray] = [np.zeros(3, dtype=np.float64)]
+    fit_points.extend(_tag_corners(np.eye(4), TAG_SIZE))
     _draw_tag_patch(ax, np.eye(4), TAG_SIZE)
 
     if T_tag_base is not None:
+        fit_points.append(T_tag_base[:3, 3])
         _draw_triad(ax, T_tag_base, scale=0.08, label="base (live)")
 
     # Mean base pose (faded) lets you see how much the live base is wandering
     # around the true (fixed) value.
     if mean_T_tag_base is not None:
+        fit_points.append(mean_T_tag_base[:3, 3])
         _draw_triad(ax, mean_T_tag_base, scale=0.06, label="base (mean)")
 
     chain_positions: list[np.ndarray] = []
@@ -373,6 +405,7 @@ def _refresh_tag_frame_viz(
         if T is None:
             continue
         chain_positions.append(T[:3, 3])
+        fit_points.append(T[:3, 3])
         _draw_triad(ax, T, scale=0.025)
     if len(chain_positions) >= 2:
         segs = [
@@ -382,7 +415,10 @@ def _refresh_tag_frame_viz(
         ax.add_collection3d(Line3DCollection(segs, colors="gray", linewidths=3))
 
     if T_tag_camera is not None:
+        fit_points.append(T_tag_camera[:3, 3])
         _draw_camera_frustum(ax, T_tag_camera, label="wrist cam")
+
+    _fit_axes_to_points(ax, fit_points)
 
     lines = [f"samples: {sample_count}"]
     if T_tag_base is not None:
@@ -505,6 +541,7 @@ def main() -> None:
             ok, frame = cap.read()
             if not ok:
                 continue
+            frame = cv2.rotate(frame, cv2.ROTATE_180)
 
             # --- joints + FK (needed every frame to build T_base_camera) -----
             joint_deg: np.ndarray | None = None

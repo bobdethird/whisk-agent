@@ -25,7 +25,7 @@ from apriltag import apriltag
 
 from camera_utils import disable_autofocus
 
-TAG_SIZE_M = 0.0185
+TAG_SIZE_M = 0.027
 DEFAULT_TAG_FAMILY = "tagStandard41h12"
 R_IPPE_TO_APRILTAG = np.diag([1.0, -1.0, -1.0]).astype(np.float64)
 
@@ -182,8 +182,8 @@ def _debug_main() -> None:
     import matplotlib.pyplot as plt
     from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
 
-    CALIB_FILE = "iphone_ultrawide_camera_calib.npz"
-    CAMERA_INDEX = 3
+    CALIB_FILE = "camera_calib.npz"
+    CAMERA_INDEX = 1
     PLOT_EVERY = 3
 
     calib = np.load(CALIB_FILE)
