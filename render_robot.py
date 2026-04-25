@@ -612,7 +612,13 @@ def _segments_to_polydata(segments: list[tuple[np.ndarray, np.ndarray]]) -> pv.P
     return pv.PolyData(points, lines=np.asarray(lines, dtype=np.int64))
 
 
-def _fit_camera(plotter: pv.Plotter, points: list[np.ndarray], margin_m: float = 0.07) -> None:
+def _fit_camera(
+    plotter: pv.Plotter,
+    points: list[np.ndarray],
+    margin_m: float = 0.03,
+    zoom: float = 1.35,
+    parallel: bool = False,
+) -> None:
     if not points:
         return
     pts = np.asarray(points, dtype=np.float64).reshape(-1, 3)
@@ -620,6 +626,94 @@ def _fit_camera(plotter: pv.Plotter, points: list[np.ndarray], margin_m: float =
     hi = pts.max(axis=0) + margin_m
     bounds = (lo[0], hi[0], lo[1], hi[1], lo[2], hi[2])
     plotter.reset_camera(bounds=bounds)
+    plotter.camera.Zoom(zoom)
+    if not parallel:
+        return
+
+    camera = plotter.camera
+    # Use the bounding-box midpoint (not the mean) so points that are sparse
+    # in the cloud (e.g. a small AprilTag at the origin) don't get pushed
+    # off-screen by an over-represented cluster (e.g. dense robot CAD bbox
+    # corners). With midpoint-as-focal, parallel_scale = span / 2 fits both
+    # extremes symmetrically.
+    center = (lo + margin_m + hi - margin_m) / 2.0
+    view_from = np.asarray(camera.GetPosition(), dtype=np.float64) - np.asarray(
+        camera.GetFocalPoint(), dtype=np.float64,
+    )
+    view_norm = float(np.linalg.norm(view_from))
+    if view_norm <= 1e-9:
+        return
+    view_from /= view_norm
+
+    view_up = np.asarray(camera.GetViewUp(), dtype=np.float64)
+    view_up -= view_from * float(np.dot(view_up, view_from))
+    up_norm = float(np.linalg.norm(view_up))
+    if up_norm <= 1e-9:
+        return
+    view_up /= up_norm
+    view_right = np.cross(view_up, view_from)
+
+    centered = pts - center
+    vertical_span = float(np.ptp(centered @ view_up)) + margin_m * 2.0
+    horizontal_span = float(np.ptp(centered @ view_right)) + margin_m * 2.0
+    width, height = plotter.window_size
+    aspect = max(float(width) / max(float(height), 1.0), 1e-6)
+    parallel_scale = max(vertical_span / 2.0, horizontal_span / (2.0 * aspect))
+    parallel_scale = max(parallel_scale / max(zoom, 1e-6), 1e-4)
+
+    distance = max(view_norm, float(np.linalg.norm(hi - lo)) * 2.0, 0.1)
+    camera.SetParallelProjection(True)
+    camera.SetFocalPoint(tuple(center))
+    camera.SetPosition(tuple(center + view_from * distance))
+    camera.SetViewUp(tuple(view_up))
+    camera.SetParallelScale(parallel_scale)
+    try:
+        plotter.renderer.ResetCameraClippingRange()
+    except Exception:
+        try:
+            plotter.reset_camera_clipping_range()
+        except Exception:
+            pass
+
+
+class RobotCadScene:
+    """Persistent PyVista actors for the SO-101 URDF visual meshes."""
+
+    def __init__(
+        self,
+        plotter: pv.Plotter,
+        model: RobotModel,
+        max_triangles_per_visual: int = 1500,
+    ) -> None:
+        self.plotter = plotter
+        self.model = model
+        self.visual_actors = build_visual_actors(
+            plotter,
+            model,
+            max_triangles_per_visual,
+        )
+        self._fit_done = False
+
+    def update(
+        self,
+        link_poses: dict[str, np.ndarray],
+        auto_fit_once: bool = False,
+    ) -> list[np.ndarray]:
+        fit_points: list[np.ndarray] = []
+        for visual_actor in self.visual_actors:
+            T_scene_link = link_poses.get(visual_actor.link_name)
+            if T_scene_link is None:
+                continue
+            T_scene_visual = T_scene_link @ visual_actor.T_link_visual
+            _set_actor_transform(visual_actor.actor, T_scene_visual)
+            fit_points.extend(
+                _transform_points(T_scene_visual, visual_actor.local_bbox_corners)
+            )
+
+        if auto_fit_once and not self._fit_done:
+            _fit_camera(self.plotter, fit_points)
+            self._fit_done = True
+        return fit_points
 
 
 def update_view(
