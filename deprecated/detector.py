@@ -156,6 +156,24 @@ def detect_tags(
     return detections
 
 
+def origin_center_error_px(
+    det: TagDetection,
+    K: np.ndarray,
+    dist: np.ndarray,
+) -> float:
+    """Pixel distance between detector center and projected PnP tag origin."""
+    projected_origin, _ = cv2.projectPoints(
+        np.zeros((1, 3), dtype=np.float64),
+        det.rvec,
+        det.tvec,
+        K,
+        dist,
+    )
+    ox, oy = projected_origin.reshape(2)
+    cx, cy = det.center
+    return float(np.linalg.norm(np.array([ox - cx, oy - cy])))
+
+
 def render_overlay(
     frame: np.ndarray,
     detections: list[TagDetection],
@@ -169,7 +187,29 @@ def render_overlay(
         cv2.polylines(frame, [pts], True, (0, 255, 0), 2)
         cv2.drawFrameAxes(frame, K, dist, det.rvec, det.tvec, tag_size_m * 0.5, 2)
         cx, cy = (int(det.center[0]), int(det.center[1]))
-        label = f"id={det.id} range={det.range_m:.4f}m z={det.z_m:.4f}m"
+        projected_origin, _ = cv2.projectPoints(
+            np.zeros((1, 3), dtype=np.float64),
+            det.rvec,
+            det.tvec,
+            K,
+            dist,
+        )
+        ox, oy = projected_origin.reshape(2)
+        origin_px = (int(round(ox)), int(round(oy)))
+        center_err_px = origin_center_error_px(det, K, dist)
+        cv2.drawMarker(
+            frame,
+            origin_px,
+            (255, 255, 0),
+            markerType=cv2.MARKER_CROSS,
+            markerSize=12,
+            thickness=2,
+        )
+        cv2.circle(frame, (cx, cy), 4, (255, 0, 255), -1)
+        label = (
+            f"id={det.id} range={det.range_m:.4f}m z={det.z_m:.4f}m "
+            f"origin-center={center_err_px:.1f}px"
+        )
         cv2.putText(frame, label, (cx, cy),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
     return frame

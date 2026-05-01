@@ -1,9 +1,8 @@
 """Spacebar-latched IK move to an AprilTag center.
 
 Runs the overhead iPhone AprilTag detection, maintains a live base-frame
-pose for a target tag, and on SPACE commands the SO-101 follower to
-move its end-effector to hover above the latched tag center while
-preserving the current end-effector orientation.
+pose for a target tag, and on SPACE commands the SO-101 follower through
+safe z-ceiling waypoints to an offset-correct hover/contact pose.
 
 One-shot per SPACE press: the target pose is frozen at the moment the
 key is pressed, so moving the tag afterwards does NOT change the
@@ -27,8 +26,23 @@ import cv2
 import numpy as np
 
 from camera_utils import disable_autofocus
-from detector import TAG_SIZE_M, detect_tags, make_detector, render_overlay
+from detector import (
+    TAG_SIZE_M,
+    detect_tags,
+    make_detector,
+    origin_center_error_px,
+    render_overlay,
+)
 from iphone_extrinsic import ReferenceTagNotFound, solve_iphone_extrinsic_avg
+from so101_tag_motion import (
+    DEFAULT_MOVE_DURATION_S,
+    DEFAULT_MOVE_RATE_HZ,
+    DEFAULT_ORIENTATION_WEIGHT,
+    DEFAULT_POSITION_PRIORITY_MM,
+    DEFAULT_SAFE_Z_M,
+    MotionConfig,
+    solve_and_execute_tag_waypoints,
+)
 
 # ---------------------------------------------------------------------------
 # Config (edit to match your setup)
@@ -75,10 +89,8 @@ TARGET_TAG_ID = 4
 # Hover offset above the target tag center, along +Z in the base frame.
 HOVER_Z_M = 0.05
 
-# IK weights. Position-priority while current orientation is (softly)
-# preserved via the current-joints initial guess. Per the plan.
+# IK weight. Orientation is controlled by the shared waypoint executor.
 IK_POSITION_WEIGHT = 1.0
-IK_ORIENTATION_WEIGHT = 0.0
 
 # Pose freshness: refuse to command a move if the latest detection of the
 # target tag is older than this at the moment SPACE is pressed (seconds).
@@ -97,10 +109,11 @@ EXTRINSIC_TIMEOUT_S = 20.0
 # startup extrinsic solve and in the main loop so the view is continuous.
 PREVIEW_WINDOW = "move_to_tag"
 
-# Workspace bounds (base frame, metres). IK solutions outside this box are
-# refused before we send them to the motors. Loosen/tighten for your cell.
-WORKSPACE_MIN = np.array([-0.40, -0.40, 0.00], dtype=np.float64)
-WORKSPACE_MAX = np.array([0.40, 0.40, 0.50], dtype=np.float64)
+# Workspace bounds (base frame, metres). These are guardrails for tag targets,
+# not motor calibration limits. They should be large enough to cover the URDF
+# reach envelope while keeping obviously unsafe below-table requests out.
+WORKSPACE_MIN = np.array([-0.40, -0.45, 0.00], dtype=np.float64)
+WORKSPACE_MAX = np.array([0.48, 0.45, 0.55], dtype=np.float64)
 
 
 # ---------------------------------------------------------------------------
@@ -178,25 +191,6 @@ def _read_joints(robot) -> tuple[np.ndarray, float]:
     return joint_deg, gripper
 
 
-def _build_hover_target(
-    T_base_flange_current: np.ndarray,
-    T_base_tag: np.ndarray,
-    hover_z_m: float,
-) -> np.ndarray:
-    """Desired T_base_flange: keep current rotation, translate to tag+hover."""
-    desired = np.eye(4, dtype=np.float64)
-    desired[:3, :3] = T_base_flange_current[:3, :3].copy()
-    desired[:3, 3] = T_base_tag[:3, 3].copy()
-    desired[2, 3] += hover_z_m
-    return desired
-
-
-def _in_workspace(xyz: np.ndarray) -> bool:
-    return bool(
-        np.all(xyz >= WORKSPACE_MIN) and np.all(xyz <= WORKSPACE_MAX)
-    )
-
-
 def _format_xyz_mm(xyz: np.ndarray) -> str:
     mm = np.asarray(xyz, dtype=np.float64).ravel() * 1000.0
     return f"({mm[0]:+7.1f}, {mm[1]:+7.1f}, {mm[2]:+7.1f}) mm"
@@ -212,6 +206,98 @@ def main() -> None:
         action="store_true",
         help="run the full perception + IK pipeline but skip send_action",
     )
+    parser.add_argument(
+        "--tag-id",
+        type=int,
+        default=TARGET_TAG_ID,
+        help="id of the AprilTag to move toward",
+    )
+    parser.add_argument(
+        "--hover-z-mm",
+        type=float,
+        default=HOVER_Z_M * 1000.0,
+        help="vertical offset above the tag/contact point (mm)",
+    )
+    parser.add_argument(
+        "--safe-z-mm",
+        type=float,
+        default=DEFAULT_SAFE_Z_M * 1000.0,
+        help="z-up ceiling height (mm) for lift/translate/descent waypoints",
+    )
+    parser.add_argument(
+        "--max-residual-mm",
+        type=float,
+        default=MAX_IK_RESIDUAL_MM,
+        help=(
+            "IK residual warning threshold. In default best-effort mode the "
+            "closest finite IK solution is still used; with --strict-residual "
+            "the move is aborted above this threshold."
+        ),
+    )
+    parser.add_argument(
+        "--position-priority-mm",
+        type=float,
+        default=DEFAULT_POSITION_PRIORITY_MM,
+        help=(
+            "retry a waypoint with orientation_weight=0 if the first IK solve "
+            "misses position by more than this many mm"
+        ),
+    )
+    parser.add_argument(
+        "--move-duration-s",
+        type=float,
+        default=DEFAULT_MOVE_DURATION_S,
+        help="seconds to stream each waypoint segment",
+    )
+    parser.add_argument(
+        "--move-rate-hz",
+        type=float,
+        default=DEFAULT_MOVE_RATE_HZ,
+        help="rate for streamed intermediate Goal_Position commands",
+    )
+    parser.add_argument(
+        "--orientation-weight",
+        type=float,
+        default=DEFAULT_ORIENTATION_WEIGHT,
+        help="IK weight for keeping gripper_frame_link +Z parallel to tag Z",
+    )
+    parser.add_argument(
+        "--flip-tag-z",
+        action="store_true",
+        help="align gripper_frame_link +Z with -tag Z instead of +tag Z",
+    )
+    parser.add_argument(
+        "--tool-offset-mm",
+        type=float,
+        nargs=3,
+        default=(0.0, 0.0, 0.0),
+        metavar=("X", "Y", "Z"),
+        help=(
+            "offset from gripper_frame_link origin to the desired contact/aim "
+            "point, expressed in gripper_frame_link coordinates (mm)"
+        ),
+    )
+    parser.add_argument(
+        "--workspace-min-mm",
+        type=float,
+        nargs=3,
+        default=tuple(WORKSPACE_MIN * 1000.0),
+        metavar=("X", "Y", "Z"),
+        help="minimum allowed IK-frame xyz target in base frame (mm)",
+    )
+    parser.add_argument(
+        "--workspace-max-mm",
+        type=float,
+        nargs=3,
+        default=tuple(WORKSPACE_MAX * 1000.0),
+        metavar=("X", "Y", "Z"),
+        help="maximum allowed IK-frame xyz target in base frame (mm)",
+    )
+    parser.add_argument(
+        "--strict-residual",
+        action="store_true",
+        help="abort instead of moving to the closest IK solution above max residual",
+    )
     args = parser.parse_args()
 
     iphone_calib = np.load(IPHONE_CALIB_FILE)
@@ -221,6 +307,11 @@ def main() -> None:
         int(iphone_calib["image_size"][0]),
         int(iphone_calib["image_size"][1]),
     )
+    hover_z_m = float(args.hover_z_mm) / 1000.0
+    safe_z_m = float(args.safe_z_mm) / 1000.0
+    tool_offset_m = np.asarray(args.tool_offset_mm, dtype=np.float64) / 1000.0
+    workspace_min = np.asarray(args.workspace_min_mm, dtype=np.float64) / 1000.0
+    workspace_max = np.asarray(args.workspace_max_mm, dtype=np.float64) / 1000.0
 
     RobotKinematics = _probe_robot_kinematics()
     kinematics = RobotKinematics(
@@ -239,6 +330,9 @@ def main() -> None:
     detector = make_detector()
     cap = _open_camera(IPHONE_CAMERA_INDEX, iphone_size)
     print(f"[move] opened iPhone camera idx={IPHONE_CAMERA_INDEX}")
+    print(
+        f"[move] calibration={IPHONE_CALIB_FILE} tag_size={TAG_SIZE_M * 1000:.1f} mm"
+    )
 
     cv2.namedWindow(PREVIEW_WINDOW, cv2.WINDOW_AUTOSIZE)
 
@@ -273,13 +367,15 @@ def main() -> None:
             f"{_format_xyz_mm(T_base_iphone[:3, 3])}"
         )
         print(
-            f"[move] target tag id={TARGET_TAG_ID}   hover = "
-            f"{HOVER_Z_M * 1000:+.1f} mm above tag   "
+            f"[move] target tag id={args.tag_id}   "
+            f"hover = {hover_z_m * 1000:+.1f} mm   "
+            f"safe_z = {safe_z_m * 1000:+.1f} mm   "
             f"[SPACE]=move  [q]/[ESC]=quit"
         )
 
         latest_T_base_tag: np.ndarray | None = None
         latest_tag_time: float = 0.0
+        latest_origin_center_err_px: float | None = None
 
         while True:
             ok, frame = cap.read()
@@ -289,11 +385,16 @@ def main() -> None:
             now = time.monotonic()
             detections = detect_tags(frame, detector, K, dist, TAG_SIZE_M)
             target_hit = next(
-                (d for d in detections if d.id == TARGET_TAG_ID), None
+                (d for d in detections if d.id == args.tag_id), None
             )
             if target_hit is not None:
                 latest_T_base_tag = T_base_iphone @ target_hit.T_camera_tag
                 latest_tag_time = now
+                latest_origin_center_err_px = origin_center_error_px(
+                    target_hit,
+                    K,
+                    dist,
+                )
 
             render_overlay(frame, detections, K, dist, TAG_SIZE_M)
 
@@ -302,13 +403,13 @@ def main() -> None:
                 and (now - latest_tag_time) <= TAG_STALE_S
             )
             if latest_T_base_tag is None:
-                status = f"tag {TARGET_TAG_ID}: never seen"
+                status = f"tag {args.tag_id}: never seen"
                 status_color = (0, 0, 255)
             else:
                 age_ms = int((now - latest_tag_time) * 1000)
                 state = "FRESH" if fresh else "STALE"
                 status = (
-                    f"tag {TARGET_TAG_ID} base="
+                    f"tag {args.tag_id} base="
                     f"{_format_xyz_mm(latest_T_base_tag[:3, 3])} "
                     f"[{state} {age_ms}ms]"
                 )
@@ -329,7 +430,7 @@ def main() -> None:
             # --- SPACE: latch pose, compute IK, optionally send action -----
             if not fresh or latest_T_base_tag is None:
                 print(
-                    f"[move] no fresh sighting of tag {TARGET_TAG_ID}; "
+                    f"[move] no fresh sighting of tag {args.tag_id}; "
                     f"refusing to move"
                 )
                 continue
@@ -337,10 +438,15 @@ def main() -> None:
             T_base_tag_latched = latest_T_base_tag.copy()
             latched_age_ms = int((now - latest_tag_time) * 1000)
             print(
-                f"[move] SPACE: latched tag {TARGET_TAG_ID} @ "
+                f"[move] SPACE: latched tag {args.tag_id} @ "
                 f"{_format_xyz_mm(T_base_tag_latched[:3, 3])} "
                 f"(age {latched_age_ms} ms)"
             )
+            if latest_origin_center_err_px is not None:
+                print(
+                    f"[move] PnP origin vs detector center at latch: "
+                    f"{latest_origin_center_err_px:.1f} px"
+                )
 
             try:
                 joint_deg, gripper = _read_joints(robot)
@@ -348,87 +454,34 @@ def main() -> None:
                 print(f"[move] joint observation missing key {e}; aborting")
                 continue
 
-            T_base_flange_current = np.asarray(
-                kinematics.forward_kinematics(joint_deg), dtype=np.float64
+            config = MotionConfig(
+                fk_joint_names=FK_JOINT_NAMES,
+                gripper_obs_key=GRIPPER_OBS_KEY,
+                workspace_min=workspace_min,
+                workspace_max=workspace_max,
+                position_weight=IK_POSITION_WEIGHT,
+                orientation_weight=float(args.orientation_weight),
+                max_residual_mm=float(args.max_residual_mm),
+                move_duration_s=float(args.move_duration_s),
+                move_rate_hz=float(args.move_rate_hz),
+                fallback_residual_mm=float(args.position_priority_mm),
+                safe_z_m=safe_z_m,
+                best_effort=not bool(args.strict_residual),
+                dry_run=bool(args.dry_run),
+                label="move",
             )
-            print(
-                f"[move] current flange @ "
-                f"{_format_xyz_mm(T_base_flange_current[:3, 3])}"
+            solve_and_execute_tag_waypoints(
+                kinematics=kinematics,
+                robot=robot,
+                current_joints_deg=joint_deg,
+                gripper=gripper,
+                T_base_tag=T_base_tag_latched,
+                hover_z_m=hover_z_m,
+                tag_z_sign=-1.0 if args.flip_tag_z else 1.0,
+                tool_offset_m=tool_offset_m,
+                config=config,
+                keepalive=lambda: cv2.waitKey(1),
             )
-
-            desired = _build_hover_target(
-                T_base_flange_current, T_base_tag_latched, HOVER_Z_M
-            )
-            print(
-                f"[move] desired flange @ "
-                f"{_format_xyz_mm(desired[:3, 3])}  "
-                f"(hover {HOVER_Z_M * 1000:+.1f} mm above tag)"
-            )
-
-            if not _in_workspace(desired[:3, 3]):
-                print(
-                    f"[move] desired {_format_xyz_mm(desired[:3, 3])} outside "
-                    f"workspace bounds "
-                    f"min={_format_xyz_mm(WORKSPACE_MIN)} "
-                    f"max={_format_xyz_mm(WORKSPACE_MAX)}; refusing to move"
-                )
-                continue
-
-            solved = np.asarray(
-                kinematics.inverse_kinematics(
-                    current_joint_pos=joint_deg,
-                    desired_ee_pose=desired,
-                    position_weight=IK_POSITION_WEIGHT,
-                    orientation_weight=IK_ORIENTATION_WEIGHT,
-                ),
-                dtype=np.float64,
-            )
-            if solved.shape[0] < len(FK_JOINT_NAMES) or not np.all(np.isfinite(solved)):
-                print(f"[move] IK returned invalid solution {solved}; aborting")
-                continue
-
-            solved_joints = solved[: len(FK_JOINT_NAMES)]
-
-            # IK residual sanity check: does these joints really bring the
-            # flange near where we asked?
-            T_base_flange_solved = np.asarray(
-                kinematics.forward_kinematics(solved_joints),
-                dtype=np.float64,
-            )
-            residual_mm = float(
-                np.linalg.norm(
-                    T_base_flange_solved[:3, 3] - desired[:3, 3]
-                ) * 1000.0
-            )
-            print(f"[move] IK position residual: {residual_mm:.1f} mm")
-            if residual_mm > MAX_IK_RESIDUAL_MM:
-                print(
-                    f"[move] residual {residual_mm:.1f} mm > "
-                    f"{MAX_IK_RESIDUAL_MM:.1f} mm; refusing to move"
-                )
-                continue
-
-            print("[move] solved joints (deg, cur -> target, delta):")
-            for i, name in enumerate(FK_JOINT_NAMES):
-                cur = float(joint_deg[i])
-                tgt = float(solved_joints[i])
-                print(
-                    f"    {name:>14}: {cur:+7.2f} -> {tgt:+7.2f}  "
-                    f"(delta {tgt - cur:+6.2f})"
-                )
-
-            action: dict[str, float] = {
-                f"{name}.pos": float(val)
-                for name, val in zip(FK_JOINT_NAMES, solved_joints)
-            }
-            action[GRIPPER_OBS_KEY] = gripper
-
-            if args.dry_run:
-                print("[move] --dry-run: skipping send_action")
-                continue
-
-            sent = robot.send_action(action)
-            print(f"[move] sent action: {sent}")
     finally:
         try:
             cap.release()
