@@ -24,7 +24,7 @@ from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 
 
 URDF_PATH = Path(__file__).parent / "SO101" / "so101_new_calib.urdf"
-PORT = "/dev/tty.usbmodem5AE60558391" #"/dev/tty.usbmodem5AE60557941"
+PORT = "/dev/tty.usbmodem5AE60557941"
 ROBOT_ID = "follower-1"
 
 ARM_JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"]
@@ -38,7 +38,7 @@ DOWN_ORIENTATION = np.array(
     ]
 )
 
-TIP_OFFSET = np.array([0.0, 0.0, 0.0])
+TIP_OFFSET = np.array([0.0, 0.0, 0.001])
 
 GRIPPER_LOCAL_Z = np.array([0.0, 0.0, 1.0])
 WORLD_DOWN = np.array([0.0, 0.0, -1.0])
