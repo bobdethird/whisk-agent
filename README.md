@@ -91,7 +91,7 @@ This holds the robot at the starting pose for 30 seconds:
 ```bash
 conda activate whisk-agent
 cd /path/to/agent-1
-mjpython run_mujoco_simulation_startingpose.py
+mjpython mujoco_sim/run_mujoco_simulation_startingpose.py
 ```
 
 ## Run The Motion Script
@@ -101,7 +101,7 @@ This runs the assignment motion:
 ```bash
 conda activate whisk-agent
 cd /path/to/agent-1
-mjpython run_mujoco_simulation.py
+mjpython mujoco_sim/run_mujoco_simulation.py
 ```
 
 The script uses this starting pose:
@@ -134,7 +134,7 @@ Validate LeRobot/Placo FK against MuJoCo:
 ```bash
 conda activate whisk-agent
 cd /path/to/agent-1
-python validate_kinematics.py
+python mujoco_sim/validate_kinematics.py
 ```
 
 Expected errors should be very small, around a few microns of position error and about `1e-5` radians of rotation error.
@@ -144,7 +144,7 @@ Run the Cartesian IK demo:
 ```bash
 conda activate whisk-agent
 cd /path/to/agent-1
-mjpython run_cartesian_ik_demo.py
+mjpython mujoco_sim/run_cartesian_ik_demo.py
 ```
 
 The demo starts from the standard pose, samples a random nearby end-effector target, solves it using IK, moves there, and then returns to the starting pose.
@@ -167,7 +167,7 @@ python -m pip install "lerobot[kinematics]"
 If the viewer fails on macOS, use `mjpython` instead of `python`:
 
 ```bash
-mjpython run_mujoco_simulation.py
+mjpython mujoco_sim/run_mujoco_simulation.py
 ```
 
 If MuJoCo cannot find meshes, confirm that `scene.xml`, `so101_new_calib.xml`, and the `assets/` folder are all inside `simulation_code/model/`.

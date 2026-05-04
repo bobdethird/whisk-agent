@@ -1,12 +1,17 @@
+import sys
 from pathlib import Path
 
 import mujoco
 import mujoco.viewer
 
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 from so101_mujoco_utils import hold_position, move_to_pose, set_initial_pose
 
 
-MODEL_PATH = Path(__file__).parent / "simulation_code" / "model" / "scene.xml"
+MODEL_PATH = ROOT_DIR / "simulation_code" / "model" / "scene.xml"
 
 STARTING_POSITION = {
     "shoulder_pan": 0.0,
@@ -48,6 +53,6 @@ if __name__ == "__main__":
                 "MuJoCo viewer on macOS requires mjpython. Run:\n"
                 "  conda activate whisk-agent\n"
                 "  cd /Users/cadenli/Documents/launchpad/whisk/agent-1\n"
-                "  mjpython run_mujoco_simulation.py"
+                "  mjpython mujoco_sim/run_mujoco_simulation.py"
             ) from exc
         raise

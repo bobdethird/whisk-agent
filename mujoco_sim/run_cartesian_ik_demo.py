@@ -1,14 +1,19 @@
+import sys
 from pathlib import Path
 
 import mujoco  # type: ignore[import-not-found]
 import mujoco.viewer  # type: ignore[import-not-found]
 import numpy as np  # type: ignore[import-not-found]
 
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 from so101_kinematics import SO101Kinematics, translated_pose
 from so101_mujoco_utils import hold_position, move_to_pose, set_initial_pose
 
 
-MODEL_PATH = Path(__file__).parent / "simulation_code" / "model" / "scene.xml"
+MODEL_PATH = ROOT_DIR / "simulation_code" / "model" / "scene.xml"
 
 STARTING_POSITION = {
     "shoulder_pan": 0.0,
@@ -19,10 +24,12 @@ STARTING_POSITION = {
     "gripper": 50.0,
 }
 
-TARGET_XY_RANGE_M = 0.2
-TARGET_Z_RANGE_M = (0.0, 0.2)
+TARGET_FORWARD_RANGE_M = 0.20
+TARGET_LATERAL_RANGE_M = 0.20
+TARGET_MIN_LATERAL_M = 0.04
+TARGET_Z_RANGE_M = (0.02, 0.2)
 IK_POSITION_TOLERANCE_M = 2e-3
-MAX_TARGET_ATTEMPTS = 20
+MAX_TARGET_ATTEMPTS = 60
 
 
 def show_target(viewer, target_pose: np.ndarray):
@@ -39,10 +46,14 @@ def show_target(viewer, target_pose: np.ndarray):
 
 
 def sample_target_offset(rng: np.random.Generator) -> np.ndarray:
+    lateral_offset = rng.uniform(TARGET_MIN_LATERAL_M, TARGET_LATERAL_RANGE_M)
+    if rng.random() < 0.5:
+        lateral_offset *= -1.0
+
     return np.array(
         [
-            rng.uniform(-TARGET_XY_RANGE_M, TARGET_XY_RANGE_M),
-            rng.uniform(-TARGET_XY_RANGE_M, TARGET_XY_RANGE_M),
+            rng.uniform(-TARGET_FORWARD_RANGE_M, TARGET_FORWARD_RANGE_M),
+            lateral_offset,
             rng.uniform(*TARGET_Z_RANGE_M),
         ]
     )
@@ -95,7 +106,9 @@ def main():
     print(f"Using kinematics backend: {kinematics.backend_name}")
     print(
         "Random target offset: "
-        f"x={target_offset[0]:.3f} m, y={target_offset[1]:.3f} m, z={target_offset[2]:.3f} m"
+        f"forward/back x={target_offset[0]:.3f} m, "
+        f"left/right y={target_offset[1]:.3f} m, "
+        f"up z={target_offset[2]:.3f} m"
     )
     print(f"IK position error: {position_error:.6f} m")
     print("Target joint position:")
@@ -122,6 +135,6 @@ if __name__ == "__main__":
                 "MuJoCo viewer on macOS requires mjpython. Run:\n"
                 "  conda activate whisk-agent\n"
                 "  cd /Users/cadenli/Documents/launchpad/whisk/agent-1\n"
-                "  mjpython run_cartesian_ik_demo.py"
+                "  mjpython mujoco_sim/run_cartesian_ik_demo.py"
             ) from exc
         raise

@@ -1,13 +1,18 @@
+import sys
 from pathlib import Path
 
 import mujoco  # type: ignore[import-not-found]
 import numpy as np  # type: ignore[import-not-found]
 
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 from so101_kinematics import MUJOCO_SITE_NAME, SO101Kinematics, rotation_error_rad
 from so101_mujoco_utils import set_initial_pose
 
 
-MODEL_PATH = Path(__file__).parent / "simulation_code" / "model" / "scene.xml"
+MODEL_PATH = ROOT_DIR / "simulation_code" / "model" / "scene.xml"
 POSITION_TOLERANCE_M = 1e-5
 ROTATION_TOLERANCE_RAD = 1e-4
 
