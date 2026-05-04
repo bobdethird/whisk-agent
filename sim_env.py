@@ -5,8 +5,9 @@ from pathlib import Path
 from typing import Any
 
 import mujoco  # type: ignore[import-not-found]
+import numpy as np  # type: ignore[import-not-found]
 
-from mujoco_sim.apriltag_world_config import DEFAULT_RENDER_HEIGHT, DEFAULT_RENDER_WIDTH
+from mujoco_sim.apriltag_world_config import APRILTAGS, DEFAULT_RENDER_HEIGHT, DEFAULT_RENDER_WIDTH, TABLE_TAG_Z_M
 from so101_kinematics import SO101Kinematics
 from so101_mujoco_utils import convert_to_dictionary, set_initial_pose
 
@@ -14,6 +15,9 @@ from so101_mujoco_utils import convert_to_dictionary, set_initial_pose
 ROOT_DIR = Path(__file__).parent
 MODEL_PATH = ROOT_DIR / "simulation_code" / "model" / "scene.xml"
 DEFAULT_CAMERA = "table_observer"
+DEFAULT_TAG_X_RANGE = (0.30, 0.46)
+DEFAULT_TAG_Y_RANGE = (-0.12, 0.08)
+DEFAULT_TAG_MIN_SPACING_M = 0.055
 
 STARTING_POSITION = {
     "shoulder_pan": 0.0,
@@ -58,3 +62,56 @@ def create_env(
         render_width=render_width,
         render_height=render_height,
     )
+
+
+def _require_tag_body_id(model: mujoco.MjModel, tag_name: str) -> int:
+    body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, tag_name)
+    if body_id < 0:
+        raise ValueError(f"Could not find AprilTag body named {tag_name!r}.")
+    return body_id
+
+
+def _sample_spaced_positions(
+    rng: np.random.Generator,
+    count: int,
+    x_range: tuple[float, float],
+    y_range: tuple[float, float],
+    min_spacing: float,
+) -> list[np.ndarray]:
+    positions: list[np.ndarray] = []
+    max_attempts = 2000
+    for _ in range(count):
+        for _ in range(max_attempts):
+            candidate = np.array(
+                [
+                    rng.uniform(*x_range),
+                    rng.uniform(*y_range),
+                    TABLE_TAG_Z_M,
+                ],
+                dtype=float,
+            )
+            if all(np.linalg.norm(candidate[:2] - position[:2]) >= min_spacing for position in positions):
+                positions.append(candidate)
+                break
+        else:
+            raise RuntimeError("Could not place AprilTags without overlap; widen the randomization ranges.")
+    return positions
+
+
+def randomize_apriltag_positions(
+    env: SimEnv,
+    seed: int | None = None,
+    x_range: tuple[float, float] = DEFAULT_TAG_X_RANGE,
+    y_range: tuple[float, float] = DEFAULT_TAG_Y_RANGE,
+    min_spacing: float = DEFAULT_TAG_MIN_SPACING_M,
+) -> None:
+    rng = np.random.default_rng(seed)
+    positions = _sample_spaced_positions(rng, len(APRILTAGS), x_range, y_range, min_spacing)
+
+    print("Randomized AprilTag positions:")
+    for tag, position in zip(APRILTAGS, positions):
+        body_id = _require_tag_body_id(env.model, tag.name)
+        env.model.body_pos[body_id] = position
+        print(f"  tag {tag.tag_id}: x={position[0]:.4f} y={position[1]:.4f} z={position[2]:.4f}")
+
+    mujoco.mj_forward(env.model, env.data)
