@@ -1,0 +1,62 @@
+{
+  "scene": "simulation_code/model/scene.xml",
+  "tag_family": "tag36h11",
+  "tag_thickness_m": 0.002,
+  "tags": [
+    {
+      "id": 0,
+      "name": "tag36h11_00000",
+      "body": "tag36h11_00000",
+      "site": "tag36h11_00000_site",
+      "source_svg": "simulation_code/model/assets/apriltags/tag36h11-0.svg",
+      "asset": "simulation_code/model/assets/apriltags/tag36_11_00000.png",
+      "size_m": 0.08,
+      "pos": [
+        0.25,
+        0.0,
+        0.002
+      ],
+      "euler": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "cameras": [
+    {
+      "name": "apriltag_overhead",
+      "pos": [
+        0.25,
+        -0.35,
+        0.45
+      ],
+      "xyaxes": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.45,
+        0.35
+      ],
+      "fovy": 45.0
+    },
+    {
+      "name": "table_observer",
+      "pos": [
+        0.25,
+        -0.85,
+        0.5
+      ],
+      "xyaxes": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.5,
+        0.85
+      ],
+      "fovy": 45.0
+    }
+  ]
+}
