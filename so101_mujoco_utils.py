@@ -43,9 +43,7 @@ def set_initial_pose(model, data, position_dict):
 
 def send_position_command(data, position_dict):
     if data.ctrl.size < len(JOINT_ORDER):
-        raise ValueError(
-            "This model has no position actuators. Use SO101/scene.xml for commanded motion."
-        )
+        raise ValueError("SO101 scene.xml must define one position actuator per joint.")
     data.ctrl[: len(JOINT_ORDER)] = convert_to_list(position_dict)
 
 

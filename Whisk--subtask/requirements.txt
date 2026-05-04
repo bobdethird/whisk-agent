@@ -1,6 +1,0 @@
-anthropic>=0.96.0
-numpy
-pytest
-opencv-python
-apriltag
-# lerobot            # install separately for real-hardware runs; not required for mock/tests

@@ -1,9 +1,10 @@
+import time
 from pathlib import Path
 
 import mujoco
 import mujoco.viewer
 
-from so101_mujoco_utils import hold_position, move_to_pose, set_initial_pose
+from so101_mujoco_utils import send_position_command, set_initial_pose
 
 
 MODEL_PATH = Path(__file__).parent / "simulation_code" / "model" / "scene.xml"
@@ -17,15 +18,6 @@ STARTING_POSITION = {
     "gripper": 0.0,
 }
 
-DESIRED_POSITION = {
-    "shoulder_pan": 0.0,
-    "shoulder_lift": 0.0,
-    "elbow_flex": 0.0,
-    "wrist_flex": 0.0,
-    "wrist_roll": 0.0,
-    "gripper": 0.0,
-}
-
 
 def main():
     model = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
@@ -33,10 +25,17 @@ def main():
     set_initial_pose(model, data, STARTING_POSITION)
 
     with mujoco.viewer.launch_passive(model, data) as viewer:
-        move_to_pose(model, data, viewer, DESIRED_POSITION, duration=2.0)
-        hold_position(model, data, viewer, duration=2.0)
-        move_to_pose(model, data, viewer, STARTING_POSITION, duration=2.0)
-        hold_position(model, data, viewer, duration=2.0)
+        start = time.time()
+        while viewer.is_running() and time.time() - start < 30:
+            step_start = time.time()
+
+            send_position_command(data, STARTING_POSITION)
+            mujoco.mj_step(model, data)
+            viewer.sync()
+
+            sleep_time = model.opt.timestep - (time.time() - step_start)
+            if sleep_time > 0:
+                time.sleep(sleep_time)
 
 
 if __name__ == "__main__":
@@ -48,6 +47,6 @@ if __name__ == "__main__":
                 "MuJoCo viewer on macOS requires mjpython. Run:\n"
                 "  conda activate whisk-agent\n"
                 "  cd /Users/cadenli/Documents/launchpad/whisk/agent-1\n"
-                "  mjpython run_mujoco_simulation.py"
+                "  mjpython run_mujoco_simulation_startingpose.py"
             ) from exc
         raise

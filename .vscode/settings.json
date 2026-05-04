@@ -1,3 +1,0 @@
-{
-  "python.defaultInterpreterPath": "${env:HOME}/miniforge3/envs/whisk-agent/bin/python"
-}
