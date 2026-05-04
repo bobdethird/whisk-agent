@@ -108,8 +108,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--metadata", type=Path, default=METADATA_PATH, help="World metadata JSON path.")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH, help="Output PNG frame path.")
-    parser.add_argument("--width", type=int, default=640, help="Render width in pixels.")
-    parser.add_argument("--height", type=int, default=480, help="Render height in pixels.")
+    parser.add_argument("--width", type=int, default=1280, help="Render width in pixels.")
+    parser.add_argument("--height", type=int, default=960, help="Render height in pixels.")
     parser.add_argument("--skip-detection", action="store_true", help="Only render the camera frame.")
     return parser.parse_args()
 

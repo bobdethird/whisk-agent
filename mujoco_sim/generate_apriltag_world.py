@@ -169,7 +169,7 @@ def add_visual(root: ET.Element) -> None:
         specular="0 0 0",
     )
     ET.SubElement(visual, "rgba", haze="0.15 0.25 0.35 1")
-    ET.SubElement(visual, "global", azimuth="160", elevation="-20")
+    ET.SubElement(visual, "global", azimuth="160", elevation="-20", offwidth="1280", offheight="960")
 
 
 def add_assets(root: ET.Element, tags: tuple[AprilTagSpec, ...], output_path: Path) -> None:

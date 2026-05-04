@@ -121,6 +121,8 @@ Render the over-table observer camera instead:
 python mujoco_sim/run_apriltag_camera_demo.py --camera table_observer --skip-detection
 ```
 
+`table_observer` is a 1280 x 960 top-down view, placed 50 cm above the workspace and looking straight down.
+
 To run tag detection on the rendered frame, install the detector package and omit `--skip-detection`:
 
 ```bash
@@ -219,7 +221,7 @@ mjpython main.py --random-tag --seed 1 --camera table_observer
 
 The dry run prints the randomized tag pose, the camera-estimated tag pose, the MuJoCo ground-truth tag pose, and the IK error before any viewer motion.
 
-In the viewer, the default hover is **5 cm** above the tag center in world `+Z` (`--hover-height 0.05`). A **green** sphere marks the hover point derived from **vision** (estimated tag center plus that offset); the arm IK targets that point. A **red** sphere marks the same vertical offset from the **MuJoCo ground-truth** tag site so you can compare estimate vs simulation truth.
+In the viewer, the default hover is **5 cm** above the tag center in world `+Z` (`--hover-height 0.05`). A **green** sphere marks the hover point derived from **vision** (estimated tag center plus that offset); the arm IK targets that point. A **red** sphere marks the same vertical offset from the **MuJoCo ground-truth** tag site so you can compare estimate vs simulation truth. A **blue** sphere marks the active observer camera, with a cyan sight line to the vision target. The default vision render is 1280 x 960.
 
 `gripper_angle_degrees` is measured from horizontal in the target-relative vertical plane. `0.0` points horizontally from the robot base toward the target, positive angles point upward, and negative angles point downward. For example, `-30.0` pitches the gripper 30 degrees downward, while `-90.0` points the gripper vertically down above the target if that pose is reachable.
 

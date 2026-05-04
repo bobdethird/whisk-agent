@@ -85,12 +85,19 @@ def show_target(viewer, target_pose: np.ndarray) -> None:
 
 def show_vision_hover_markers(
     viewer,
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    camera_name: str,
     estimated_hover_m: np.ndarray,
     ground_truth_hover_m: np.ndarray,
 ) -> None:
     """Green: hover point from vision (estimated tag center + vertical offset).
     Red: same offset from MuJoCo ground-truth tag site (simulation truth).
+    Blue/cyan: active camera position and sight line to the vision target.
     """
+    camera_id = require_named_id(model, mujoco.mjtObj.mjOBJ_CAMERA, camera_name)
+    camera_position = data.cam_xpos[camera_id].copy()
+
     mujoco.mjv_initGeom(
         viewer.user_scn.geoms[0],
         type=mujoco.mjtGeom.mjGEOM_SPHERE,
@@ -102,12 +109,35 @@ def show_vision_hover_markers(
     mujoco.mjv_initGeom(
         viewer.user_scn.geoms[1],
         type=mujoco.mjtGeom.mjGEOM_SPHERE,
-        size=[0.015, 0.0, 0.0],
+        size=[0.006, 0.0, 0.0],
         pos=ground_truth_hover_m,
         mat=np.eye(3).flatten(),
-        rgba=[1.0, 0.0, 0.0, 0.55],
+        rgba=[1.0, 0.0, 0.0, 1.0],
     )
-    viewer.user_scn.ngeom = 2
+    mujoco.mjv_initGeom(
+        viewer.user_scn.geoms[2],
+        type=mujoco.mjtGeom.mjGEOM_SPHERE,
+        size=[0.012, 0.0, 0.0],
+        pos=camera_position,
+        mat=np.eye(3).flatten(),
+        rgba=[0.0, 0.25, 1.0, 0.85],
+    )
+    mujoco.mjv_initGeom(
+        viewer.user_scn.geoms[3],
+        type=mujoco.mjtGeom.mjGEOM_LINE,
+        size=[0.0, 0.0, 0.0],
+        pos=np.zeros(3),
+        mat=np.eye(3).flatten(),
+        rgba=[0.0, 0.9, 1.0, 0.75],
+    )
+    mujoco.mjv_connector(
+        viewer.user_scn.geoms[3],
+        mujoco.mjtGeom.mjGEOM_LINE,
+        2.0,
+        camera_position,
+        estimated_hover_m,
+    )
+    viewer.user_scn.ngeom = 4
     viewer.sync()
 
 
@@ -342,8 +372,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Move SO-101 to an AprilTag pose estimated from a MuJoCo camera.")
     parser.add_argument("--scene", type=Path, default=MODEL_PATH, help="MJCF scene to load.")
     parser.add_argument("--camera", default=DEFAULT_CAMERA, help="Named MuJoCo camera used for tag detection.")
-    parser.add_argument("--width", type=int, default=640, help="Rendered camera width in pixels.")
-    parser.add_argument("--height", type=int, default=480, help="Rendered camera height in pixels.")
+    parser.add_argument("--width", type=int, default=1280, help="Rendered camera width in pixels.")
+    parser.add_argument("--height", type=int, default=960, help="Rendered camera height in pixels.")
     parser.add_argument("--random-tag", action="store_true", help="Randomize the AprilTag pose before detection.")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducible tag placement.")
     parser.add_argument("--tag-name", default=DEFAULT_TAG_NAME, help="MuJoCo body name for the AprilTag.")
@@ -436,7 +466,7 @@ def run_detected_tag_motion(args: argparse.Namespace) -> None:
         return
 
     with mujoco.viewer.launch_passive(model, data) as viewer:
-        show_vision_hover_markers(viewer, target_world_position, ground_truth_hover)
+        show_vision_hover_markers(viewer, model, data, args.camera, target_world_position, ground_truth_hover)
         hold_position(model, data, viewer, duration=1.0)
         move_to_pose(model, data, viewer, ik_plan.target_position, duration=3.0)
         hold_position(model, data, viewer, duration=3.0)

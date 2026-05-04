@@ -56,7 +56,8 @@ CAMERAS = (
     ),
     CameraSpec(
         name="table_observer",
-        pos=(0.25, -0.85, 0.5),
-        xyaxes=(1.0, 0.0, 0.0, 0.0, 0.5, 0.85),
+        pos=(0.25, 0.0, 0.5),
+        xyaxes=(1.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+        fovy=60.0,
     ),
 )
