@@ -19,8 +19,10 @@ from apriltag_world_config import (
     TAG_BLACK_SQUARE_FRACTION,
     TAG_FAMILY,
     TAG_THICKNESS_M,
+    TABLE_SCENE,
     AprilTagSpec,
     CameraSpec,
+    TableSceneSpec,
 )
 
 
@@ -181,7 +183,12 @@ def add_visual(root: ET.Element) -> None:
     )
 
 
-def add_assets(root: ET.Element, tags: tuple[AprilTagSpec, ...], output_path: Path) -> None:
+def add_assets(
+    root: ET.Element,
+    tags: tuple[AprilTagSpec, ...],
+    table_scene: TableSceneSpec,
+    output_path: Path,
+) -> None:
     asset = ET.SubElement(root, "asset")
     ET.SubElement(
         asset,
@@ -200,11 +207,24 @@ def add_assets(root: ET.Element, tags: tuple[AprilTagSpec, ...], output_path: Pa
         name="groundplane",
         builtin="checker",
         mark="edge",
-        rgb1="0.2 0.3 0.4",
-        rgb2="0.1 0.2 0.3",
-        markrgb="0.8 0.8 0.8",
+        rgb1="0.18 0.19 0.20",
+        rgb2="0.12 0.13 0.14",
+        markrgb="0.35 0.35 0.35",
         width="300",
         height="300",
+    )
+    ET.SubElement(
+        asset,
+        "texture",
+        type="2d",
+        name=f"{table_scene.name}_top_texture",
+        builtin="checker",
+        mark="edge",
+        rgb1="0.50 0.32 0.18",
+        rgb2="0.42 0.26 0.14",
+        markrgb="0.62 0.45 0.28",
+        width="512",
+        height="512",
     )
     ET.SubElement(
         asset,
@@ -213,7 +233,30 @@ def add_assets(root: ET.Element, tags: tuple[AprilTagSpec, ...], output_path: Pa
         texture="groundplane",
         texuniform="true",
         texrepeat="5 5",
-        reflectance="0.2",
+        reflectance="0.04",
+        specular="0.05",
+        shininess="0.05",
+    )
+    ET.SubElement(
+        asset,
+        "material",
+        name=f"{table_scene.name}_top_material",
+        texture=f"{table_scene.name}_top_texture",
+        rgba=format_floats(table_scene.rgba),
+        texuniform="true",
+        texrepeat="3 2",
+        reflectance="0",
+        specular="0.08",
+        shininess="0.08",
+    )
+    ET.SubElement(
+        asset,
+        "material",
+        name=f"{table_scene.name}_leg_material",
+        rgba="0.36 0.22 0.12 1",
+        reflectance="0",
+        specular="0.05",
+        shininess="0.05",
     )
     for tag in tags:
         texture_name = f"{tag.name}_texture"
@@ -251,49 +294,82 @@ def add_assets(root: ET.Element, tags: tuple[AprilTagSpec, ...], output_path: Pa
         )
 
 
-def add_worldbody(
-    root: ET.Element,
-    tags: tuple[AprilTagSpec, ...],
-    cameras: tuple[CameraSpec, ...],
-) -> None:
-    worldbody = ET.SubElement(root, "worldbody")
-    ET.SubElement(worldbody, "light", pos="0 0 3.5", dir="0 0 -1", directional="true")
+def add_apriltag_body(parent: ET.Element, tag: AprilTagSpec, pos: tuple[float, float, float]) -> None:
+    body = ET.SubElement(
+        parent,
+        "body",
+        name=tag.name,
+        pos=format_floats(pos),
+        euler=format_floats(tag.euler),
+    )
+    ET.SubElement(
+        body,
+        "geom",
+        name=f"{tag.name}_visual",
+        type="mesh",
+        mesh=f"{tag.name}_mesh",
+        material=tag.name,
+        contype="0",
+        conaffinity="0",
+        density="0",
+    )
+    ET.SubElement(
+        body,
+        "site",
+        name=f"{tag.name}_site",
+        pos="0 0 0",
+        size="0.005",
+        rgba="0 1 0 0",
+    )
+
+
+def add_table_scene(worldbody: ET.Element, table_scene: TableSceneSpec) -> None:
     ET.SubElement(
         worldbody,
         "geom",
         name="floor",
         size="0 0 0.05",
-        pos="0 0 0",
+        pos=format_floats((0.0, 0.0, table_scene.floor_z)),
         type="plane",
         material="groundplane",
     )
+    table_body = ET.SubElement(worldbody, "body", name=table_scene.name)
+    ET.SubElement(
+        table_body,
+        "geom",
+        name=f"{table_scene.name}_top",
+        type="box",
+        pos=format_floats(table_scene.top_center_pos),
+        size=format_floats(table_scene.top_half_size),
+        material=f"{table_scene.name}_top_material",
+        friction="1.3 0.01 0.001",
+    )
+    for index, leg_pos in enumerate(table_scene.leg_positions):
+        ET.SubElement(
+            table_body,
+            "geom",
+            name=f"{table_scene.name}_leg_{index}",
+            type="box",
+            pos=format_floats(leg_pos),
+            size=format_floats(table_scene.leg_half_size),
+            material=f"{table_scene.name}_leg_material",
+            friction="1.0 0.01 0.001",
+        )
+
+
+def add_worldbody(
+    root: ET.Element,
+    tags: tuple[AprilTagSpec, ...],
+    table_scene: TableSceneSpec,
+    cameras: tuple[CameraSpec, ...],
+) -> None:
+    worldbody = ET.SubElement(root, "worldbody")
+    ET.SubElement(worldbody, "light", pos="0 0 3.5", dir="0 0 -1", directional="true")
+    ET.SubElement(worldbody, "light", pos="0.15 -0.45 0.75", dir="0.1 0.35 -1", directional="true", diffuse="0.45 0.4 0.35")
+    add_table_scene(worldbody, table_scene)
 
     for tag in tags:
-        body = ET.SubElement(
-            worldbody,
-            "body",
-            name=tag.name,
-            pos=format_floats(tag.pos),
-            euler=format_floats(tag.euler),
-        )
-        ET.SubElement(
-            body,
-            "geom",
-            name=f"{tag.name}_visual",
-            type="mesh",
-            mesh=f"{tag.name}_mesh",
-            material=tag.name,
-            contype="0",
-            conaffinity="0",
-        )
-        ET.SubElement(
-            body,
-            "site",
-            name=f"{tag.name}_site",
-            pos="0 0 0",
-            size="0.005",
-            rgba="0 1 0 0",
-        )
+        add_apriltag_body(worldbody, tag, tag.pos)
 
     for camera in cameras:
         ET.SubElement(
@@ -308,6 +384,7 @@ def add_worldbody(
 
 def build_scene(
     tags: tuple[AprilTagSpec, ...] = APRILTAGS,
+    table_scene: TableSceneSpec = TABLE_SCENE,
     cameras: tuple[CameraSpec, ...] = CAMERAS,
     output_path: Path = SCENE_PATH,
 ) -> ET.ElementTree:
@@ -319,8 +396,8 @@ def build_scene(
     )
     ET.SubElement(root, "include", file=path_for_mjcf(MODEL_DIR / "so101_new_calib.xml", output_path))
     add_visual(root)
-    add_assets(root, tags, output_path)
-    add_worldbody(root, tags, cameras)
+    add_assets(root, tags, table_scene, output_path)
+    add_worldbody(root, tags, table_scene, cameras)
     ET.indent(root, space="    ")
     return ET.ElementTree(root)
 
@@ -329,12 +406,20 @@ def write_metadata(
     metadata_path: Path,
     scene_path: Path,
     tags: tuple[AprilTagSpec, ...],
+    table_scene: TableSceneSpec,
     cameras: tuple[CameraSpec, ...],
 ) -> None:
     metadata = {
         "scene": str(scene_path.relative_to(MODEL_DIR.parent.parent)),
         "tag_family": TAG_FAMILY,
         "tag_thickness_m": TAG_THICKNESS_M,
+        "table": {
+            "name": table_scene.name,
+            "top_z": table_scene.top_z,
+            "floor_z": table_scene.floor_z,
+            "top_center_pos": table_scene.top_center_pos,
+            "top_half_size": table_scene.top_half_size,
+        },
         "tags": [
             {
                 "id": tag.tag_id,
@@ -371,7 +456,7 @@ def generate_world(scene_path: Path = SCENE_PATH, metadata_path: Path = METADATA
     tree = build_scene(output_path=scene_path)
     tree.write(scene_path, encoding="unicode", xml_declaration=False)
     scene_path.write_text(scene_path.read_text() + "\n")
-    write_metadata(metadata_path, scene_path, APRILTAGS, CAMERAS)
+    write_metadata(metadata_path, scene_path, APRILTAGS, TABLE_SCENE, CAMERAS)
     print(f"Wrote MuJoCo scene: {scene_path}")
     print(f"Wrote world metadata: {metadata_path}")
 

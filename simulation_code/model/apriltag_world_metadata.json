@@ -2,6 +2,21 @@
   "scene": "simulation_code/model/scene.xml",
   "tag_family": "tag36h11",
   "tag_thickness_m": 0.002,
+  "table": {
+    "name": "work_table",
+    "top_z": 0.0,
+    "floor_z": -0.45,
+    "top_center_pos": [
+      0.22,
+      0.0,
+      -0.025
+    ],
+    "top_half_size": [
+      0.36,
+      0.26,
+      0.025
+    ]
+  },
   "tags": [
     {
       "id": 0,
@@ -10,10 +25,105 @@
       "site": "tag36h11_00000_site",
       "source_svg": "simulation_code/model/assets/apriltags/tag36h11-0.svg",
       "asset": "simulation_code/model/assets/apriltags/tag36_11_00000.png",
-      "size_m": 0.01,
+      "size_m": 0.024,
       "pos": [
-        0.25,
+        0.32,
+        -0.08,
+        0.002
+      ],
+      "euler": [
         0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 1,
+      "name": "tag36h11_00001",
+      "body": "tag36h11_00001",
+      "site": "tag36h11_00001_site",
+      "source_svg": "simulation_code/model/assets/apriltags/tag36h11-1.svg",
+      "asset": "simulation_code/model/assets/apriltags/tag36_11_00001.png",
+      "size_m": 0.024,
+      "pos": [
+        0.38,
+        -0.08,
+        0.002
+      ],
+      "euler": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 2,
+      "name": "tag36h11_00002",
+      "body": "tag36h11_00002",
+      "site": "tag36h11_00002_site",
+      "source_svg": "simulation_code/model/assets/apriltags/tag36h11-2.svg",
+      "asset": "simulation_code/model/assets/apriltags/tag36_11_00002.png",
+      "size_m": 0.024,
+      "pos": [
+        0.44,
+        -0.08,
+        0.002
+      ],
+      "euler": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 3,
+      "name": "tag36h11_00003",
+      "body": "tag36h11_00003",
+      "site": "tag36h11_00003_site",
+      "source_svg": "simulation_code/model/assets/apriltags/tag36h11-3.svg",
+      "asset": "simulation_code/model/assets/apriltags/tag36_11_00003.png",
+      "size_m": 0.024,
+      "pos": [
+        0.32,
+        0.04,
+        0.002
+      ],
+      "euler": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 4,
+      "name": "tag36h11_00004",
+      "body": "tag36h11_00004",
+      "site": "tag36h11_00004_site",
+      "source_svg": "simulation_code/model/assets/apriltags/tag36h11-4.svg",
+      "asset": "simulation_code/model/assets/apriltags/tag36_11_00004.png",
+      "size_m": 0.024,
+      "pos": [
+        0.38,
+        0.04,
+        0.002
+      ],
+      "euler": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 5,
+      "name": "tag36h11_00005",
+      "body": "tag36h11_00005",
+      "site": "tag36h11_00005_site",
+      "source_svg": "simulation_code/model/assets/apriltags/tag36h11-5.svg",
+      "asset": "simulation_code/model/assets/apriltags/tag36_11_00005.png",
+      "size_m": 0.024,
+      "pos": [
+        0.44,
+        0.04,
         0.002
       ],
       "euler": [

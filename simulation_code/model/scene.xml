@@ -8,18 +8,64 @@
     </visual>
     <asset>
         <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072" />
-        <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300" />
-        <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2" />
-        <mesh name="tag36h11_00000_mesh" file="apriltags/tag_card.obj" scale="0.0125 0.0125 0.002" />
+        <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.18 0.19 0.20" rgb2="0.12 0.13 0.14" markrgb="0.35 0.35 0.35" width="300" height="300" />
+        <texture type="2d" name="work_table_top_texture" builtin="checker" mark="edge" rgb1="0.50 0.32 0.18" rgb2="0.42 0.26 0.14" markrgb="0.62 0.45 0.28" width="512" height="512" />
+        <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.04" specular="0.05" shininess="0.05" />
+        <material name="work_table_top_material" texture="work_table_top_texture" rgba="0.55 0.36 0.2 1" texuniform="true" texrepeat="3 2" reflectance="0" specular="0.08" shininess="0.08" />
+        <material name="work_table_leg_material" rgba="0.36 0.22 0.12 1" reflectance="0" specular="0.05" shininess="0.05" />
+        <mesh name="tag36h11_00000_mesh" file="apriltags/tag_card.obj" scale="0.03 0.03 0.002" />
         <texture type="2d" name="tag36h11_00000_texture" file="assets/apriltags/tag36_11_00000.png" />
         <material name="tag36h11_00000" texture="tag36h11_00000_texture" rgba="1 1 1 1" texuniform="true" texrepeat="1 1" emission="0.5" specular="0" shininess="0" reflectance="0" />
+        <mesh name="tag36h11_00001_mesh" file="apriltags/tag_card.obj" scale="0.03 0.03 0.002" />
+        <texture type="2d" name="tag36h11_00001_texture" file="assets/apriltags/tag36_11_00001.png" />
+        <material name="tag36h11_00001" texture="tag36h11_00001_texture" rgba="1 1 1 1" texuniform="true" texrepeat="1 1" emission="0.5" specular="0" shininess="0" reflectance="0" />
+        <mesh name="tag36h11_00002_mesh" file="apriltags/tag_card.obj" scale="0.03 0.03 0.002" />
+        <texture type="2d" name="tag36h11_00002_texture" file="assets/apriltags/tag36_11_00002.png" />
+        <material name="tag36h11_00002" texture="tag36h11_00002_texture" rgba="1 1 1 1" texuniform="true" texrepeat="1 1" emission="0.5" specular="0" shininess="0" reflectance="0" />
+        <mesh name="tag36h11_00003_mesh" file="apriltags/tag_card.obj" scale="0.03 0.03 0.002" />
+        <texture type="2d" name="tag36h11_00003_texture" file="assets/apriltags/tag36_11_00003.png" />
+        <material name="tag36h11_00003" texture="tag36h11_00003_texture" rgba="1 1 1 1" texuniform="true" texrepeat="1 1" emission="0.5" specular="0" shininess="0" reflectance="0" />
+        <mesh name="tag36h11_00004_mesh" file="apriltags/tag_card.obj" scale="0.03 0.03 0.002" />
+        <texture type="2d" name="tag36h11_00004_texture" file="assets/apriltags/tag36_11_00004.png" />
+        <material name="tag36h11_00004" texture="tag36h11_00004_texture" rgba="1 1 1 1" texuniform="true" texrepeat="1 1" emission="0.5" specular="0" shininess="0" reflectance="0" />
+        <mesh name="tag36h11_00005_mesh" file="apriltags/tag_card.obj" scale="0.03 0.03 0.002" />
+        <texture type="2d" name="tag36h11_00005_texture" file="assets/apriltags/tag36_11_00005.png" />
+        <material name="tag36h11_00005" texture="tag36h11_00005_texture" rgba="1 1 1 1" texuniform="true" texrepeat="1 1" emission="0.5" specular="0" shininess="0" reflectance="0" />
     </asset>
     <worldbody>
         <light pos="0 0 3.5" dir="0 0 -1" directional="true" />
-        <geom name="floor" size="0 0 0.05" pos="0 0 0" type="plane" material="groundplane" />
-        <body name="tag36h11_00000" pos="0.25 0 0.002" euler="0 0 0">
-            <geom name="tag36h11_00000_visual" type="mesh" mesh="tag36h11_00000_mesh" material="tag36h11_00000" contype="0" conaffinity="0" />
+        <light pos="0.15 -0.45 0.75" dir="0.1 0.35 -1" directional="true" diffuse="0.45 0.4 0.35" />
+        <geom name="floor" size="0 0 0.05" pos="0 0 -0.45" type="plane" material="groundplane" />
+        <body name="work_table">
+            <geom name="work_table_top" type="box" pos="0.22 0 -0.025" size="0.36 0.26 0.025" material="work_table_top_material" friction="1.3 0.01 0.001" />
+            <geom name="work_table_leg_0" type="box" pos="-0.095 -0.215 -0.25" size="0.018 0.018 0.2" material="work_table_leg_material" friction="1.0 0.01 0.001" />
+            <geom name="work_table_leg_1" type="box" pos="-0.095 0.215 -0.25" size="0.018 0.018 0.2" material="work_table_leg_material" friction="1.0 0.01 0.001" />
+            <geom name="work_table_leg_2" type="box" pos="0.535 -0.215 -0.25" size="0.018 0.018 0.2" material="work_table_leg_material" friction="1.0 0.01 0.001" />
+            <geom name="work_table_leg_3" type="box" pos="0.535 0.215 -0.25" size="0.018 0.018 0.2" material="work_table_leg_material" friction="1.0 0.01 0.001" />
+        </body>
+        <body name="tag36h11_00000" pos="0.32 -0.08 0.002" euler="0 0 0">
+            <geom name="tag36h11_00000_visual" type="mesh" mesh="tag36h11_00000_mesh" material="tag36h11_00000" contype="0" conaffinity="0" density="0" />
             <site name="tag36h11_00000_site" pos="0 0 0" size="0.005" rgba="0 1 0 0" />
+        </body>
+        <body name="tag36h11_00001" pos="0.38 -0.08 0.002" euler="0 0 0">
+            <geom name="tag36h11_00001_visual" type="mesh" mesh="tag36h11_00001_mesh" material="tag36h11_00001" contype="0" conaffinity="0" density="0" />
+            <site name="tag36h11_00001_site" pos="0 0 0" size="0.005" rgba="0 1 0 0" />
+        </body>
+        <body name="tag36h11_00002" pos="0.44 -0.08 0.002" euler="0 0 0">
+            <geom name="tag36h11_00002_visual" type="mesh" mesh="tag36h11_00002_mesh" material="tag36h11_00002" contype="0" conaffinity="0" density="0" />
+            <site name="tag36h11_00002_site" pos="0 0 0" size="0.005" rgba="0 1 0 0" />
+        </body>
+        <body name="tag36h11_00003" pos="0.32 0.04 0.002" euler="0 0 0">
+            <geom name="tag36h11_00003_visual" type="mesh" mesh="tag36h11_00003_mesh" material="tag36h11_00003" contype="0" conaffinity="0" density="0" />
+            <site name="tag36h11_00003_site" pos="0 0 0" size="0.005" rgba="0 1 0 0" />
+        </body>
+        <body name="tag36h11_00004" pos="0.38 0.04 0.002" euler="0 0 0">
+            <geom name="tag36h11_00004_visual" type="mesh" mesh="tag36h11_00004_mesh" material="tag36h11_00004" contype="0" conaffinity="0" density="0" />
+            <site name="tag36h11_00004_site" pos="0 0 0" size="0.005" rgba="0 1 0 0" />
+        </body>
+        <body name="tag36h11_00005" pos="0.44 0.04 0.002" euler="0 0 0">
+            <geom name="tag36h11_00005_visual" type="mesh" mesh="tag36h11_00005_mesh" material="tag36h11_00005" contype="0" conaffinity="0" density="0" />
+            <site name="tag36h11_00005_site" pos="0 0 0" size="0.005" rgba="0 1 0 0" />
         </body>
         <camera name="apriltag_overhead" pos="0.25 -0.35 0.45" xyaxes="1 0 0 0 0.45 0.35" fovy="45" />
         <camera name="table_observer" pos="0.25 0 0.5" xyaxes="1 0 0 0 1 0" fovy="60" />

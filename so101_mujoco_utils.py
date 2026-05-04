@@ -47,9 +47,11 @@ def send_position_command(data, position_dict):
     data.ctrl[: len(JOINT_ORDER)] = convert_to_list(position_dict)
 
 
-def step_realtime(model, data, viewer):
+def step_realtime(model, data, viewer, step_callback=None):
     step_start = time.time()
     mujoco.mj_step(model, data)
+    if step_callback is not None:
+        step_callback()
     viewer.sync()
 
     sleep_time = model.opt.timestep - (time.time() - step_start)
@@ -57,7 +59,7 @@ def step_realtime(model, data, viewer):
         time.sleep(sleep_time)
 
 
-def move_to_pose(model, data, viewer, desired_position, duration):
+def move_to_pose(model, data, viewer, desired_position, duration, step_callback=None):
     start_time = time.time()
     starting_pose = convert_to_dictionary(data.qpos.copy())
 
@@ -74,24 +76,24 @@ def move_to_pose(model, data, viewer, desired_position, duration):
             position_dict[joint] = (1.0 - alpha) * p0 + alpha * pf
 
         send_position_command(data, position_dict)
-        step_realtime(model, data, viewer)
+        step_realtime(model, data, viewer, step_callback=step_callback)
 
     send_position_command(data, desired_position)
-    step_realtime(model, data, viewer)
+    step_realtime(model, data, viewer, step_callback=step_callback)
 
 
-def hold_position(model, data, viewer, duration):
+def hold_position(model, data, viewer, duration, step_callback=None):
     position_dict = convert_to_dictionary(data.qpos.copy())
     start_time = time.time()
 
     while viewer.is_running() and time.time() - start_time < duration:
         send_position_command(data, position_dict)
-        step_realtime(model, data, viewer)
+        step_realtime(model, data, viewer, step_callback=step_callback)
 
 
-def hold_position_until_closed(model, data, viewer):
+def hold_position_until_closed(model, data, viewer, step_callback=None):
     position_dict = convert_to_dictionary(data.qpos.copy())
 
     while viewer.is_running():
         send_position_command(data, position_dict)
-        step_realtime(model, data, viewer)
+        step_realtime(model, data, viewer, step_callback=step_callback)
