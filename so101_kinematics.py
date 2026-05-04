@@ -75,6 +75,54 @@ def pose_from_position_rotation(position: np.ndarray, rotation: np.ndarray) -> n
     return pose
 
 
+def target_relative_gripper_rotation(
+    target_position: np.ndarray,
+    gripper_angle_degrees: float,
+    base_position: np.ndarray | None = None,
+) -> np.ndarray:
+    target_position = np.asarray(target_position, dtype=float)
+    if target_position.shape != (3,):
+        raise ValueError(f"Expected target position shape (3,), got {target_position.shape}.")
+
+    if base_position is None:
+        base_position = np.zeros(3)
+    base_position = np.asarray(base_position, dtype=float)
+    if base_position.shape != (3,):
+        raise ValueError(f"Expected base position shape (3,), got {base_position.shape}.")
+
+    radial = target_position - base_position
+    radial[2] = 0.0
+    radial_norm = np.linalg.norm(radial)
+    if radial_norm == 0.0:
+        raise ValueError("Target position must not be directly above the base origin.")
+    radial /= radial_norm
+
+    world_up = np.array([0.0, 0.0, 1.0])
+    angle_rad = np.deg2rad(float(gripper_angle_degrees))
+    approach_axis = np.cos(angle_rad) * radial + np.sin(angle_rad) * world_up
+    approach_axis /= np.linalg.norm(approach_axis)
+
+    sideways_axis = np.cross(world_up, radial)
+    sideways_axis /= np.linalg.norm(sideways_axis)
+    normal_axis = np.cross(approach_axis, sideways_axis)
+    normal_axis /= np.linalg.norm(normal_axis)
+
+    return np.column_stack((approach_axis, sideways_axis, normal_axis))
+
+
+def pose_from_target_relative_gripper_angle(
+    target_position: np.ndarray,
+    gripper_angle_degrees: float,
+    base_position: np.ndarray | None = None,
+) -> np.ndarray:
+    rotation = target_relative_gripper_rotation(
+        target_position,
+        gripper_angle_degrees,
+        base_position=base_position,
+    )
+    return pose_from_position_rotation(target_position, rotation)
+
+
 def translated_pose(pose: np.ndarray, offset_xyz: np.ndarray) -> np.ndarray:
     pose = _require_pose_matrix(pose).copy()
     offset_xyz = np.asarray(offset_xyz, dtype=float)

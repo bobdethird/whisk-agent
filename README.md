@@ -149,6 +149,18 @@ mjpython mujoco_sim/run_cartesian_ik_demo.py
 
 The demo starts from the standard pose, samples a random nearby end-effector target, solves it using IK, moves there, and then returns to the starting pose.
 
+The top-level `main.py` helper moves to absolute world-space coordinates in meters and can also command a final gripper angle:
+
+```python
+move(0.08, 0.06, 0.05, gripper_angle_degrees=-30.0)
+```
+
+In that example, the target point is `x=8 cm`, `y=6 cm`, `z=5 cm` in the MuJoCo/world coordinate frame, not an offset from the starting gripper pose.
+
+`gripper_angle_degrees` is measured from horizontal in the target-relative vertical plane. `0.0` points horizontally from the robot base toward the target, positive angles point upward, and negative angles point downward. For example, `-30.0` pitches the gripper 30 degrees downward, while `-90.0` points the gripper vertically down above the target if that pose is reachable.
+
+When a gripper angle is provided, IK prioritizes reaching the target position over matching the exact orientation using an approximately 90/10 position-to-orientation weighting.
+
 ## Troubleshooting
 
 If `mujoco` cannot be imported, make sure the `whisk-agent` environment is active:
