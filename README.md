@@ -35,17 +35,17 @@ Activate it:
 conda activate whisk-agent
 ```
 
-Install MuJoCo:
+Install MuJoCo and the LeRobot kinematics dependencies:
 
 ```bash
 python -m pip install --upgrade pip
-python -m pip install mujoco
+python -m pip install mujoco "lerobot[kinematics]"
 ```
 
-Verify MuJoCo imports:
+Verify the simulator and kinematics packages import:
 
 ```bash
-python -c "import mujoco; print(mujoco.__version__)"
+python -c "import mujoco, lerobot, placo; print(mujoco.__version__)"
 ```
 
 ## Model Files
@@ -117,6 +117,38 @@ STARTING_POSITION = {
 }
 ```
 
+## Forward And Inverse Kinematics
+
+The kinematics layer uses LeRobot's Placo-backed `RobotKinematics` with the local URDF at `simulation_code/model/so101_new_calib.urdf` and the target frame `gripper_frame_link`.
+
+The local adapter in `so101_kinematics.py` keeps the same joint dictionary convention used by the MuJoCo helpers:
+
+- Arm joints are in degrees.
+- `gripper` is preserved as a `0..100` command value.
+- FK/IK poses default to MuJoCo's `gripperframe` site convention.
+
+LeRobot's URDF frame and MuJoCo's `gripperframe` site share the same origin, but their local axes differ by a fixed rotation. The adapter applies that correction so validation and IK targets line up with the simulation.
+
+Validate LeRobot/Placo FK against MuJoCo:
+
+```bash
+conda activate whisk-agent
+cd /path/to/agent-1
+python validate_kinematics.py
+```
+
+Expected errors should be very small, around a few microns of position error and about `1e-5` radians of rotation error.
+
+Run the Cartesian IK demo:
+
+```bash
+conda activate whisk-agent
+cd /path/to/agent-1
+mjpython run_cartesian_ik_demo.py
+```
+
+The demo starts from the standard pose, samples a random nearby end-effector target, solves it using IK, moves there, and then returns to the starting pose.
+
 ## Troubleshooting
 
 If `mujoco` cannot be imported, make sure the `whisk-agent` environment is active:
@@ -124,6 +156,12 @@ If `mujoco` cannot be imported, make sure the `whisk-agent` environment is activ
 ```bash
 conda activate whisk-agent
 python -m pip show mujoco
+```
+
+If `lerobot` or `placo` cannot be imported, install the kinematics extra:
+
+```bash
+python -m pip install "lerobot[kinematics]"
 ```
 
 If the viewer fails on macOS, use `mjpython` instead of `python`:

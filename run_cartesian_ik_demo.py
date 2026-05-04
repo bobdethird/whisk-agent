@@ -1,0 +1,127 @@
+from pathlib import Path
+
+import mujoco  # type: ignore[import-not-found]
+import mujoco.viewer  # type: ignore[import-not-found]
+import numpy as np  # type: ignore[import-not-found]
+
+from so101_kinematics import SO101Kinematics, translated_pose
+from so101_mujoco_utils import hold_position, move_to_pose, set_initial_pose
+
+
+MODEL_PATH = Path(__file__).parent / "simulation_code" / "model" / "scene.xml"
+
+STARTING_POSITION = {
+    "shoulder_pan": 0.0,
+    "shoulder_lift": -45.0,
+    "elbow_flex": 90.0,
+    "wrist_flex": -45.0,
+    "wrist_roll": 0.0,
+    "gripper": 50.0,
+}
+
+TARGET_XY_RANGE_M = 0.2
+TARGET_Z_RANGE_M = (0.0, 0.2)
+IK_POSITION_TOLERANCE_M = 2e-3
+MAX_TARGET_ATTEMPTS = 20
+
+
+def show_target(viewer, target_pose: np.ndarray):
+    mujoco.mjv_initGeom(
+        viewer.user_scn.geoms[0],
+        type=mujoco.mjtGeom.mjGEOM_SPHERE,
+        size=[0.015, 0.0, 0.0],
+        pos=target_pose[:3, 3],
+        mat=np.eye(3).flatten(),
+        rgba=[0.0, 1.0, 0.0, 0.45],
+    )
+    viewer.user_scn.ngeom = 1
+    viewer.sync()
+
+
+def sample_target_offset(rng: np.random.Generator) -> np.ndarray:
+    return np.array(
+        [
+            rng.uniform(-TARGET_XY_RANGE_M, TARGET_XY_RANGE_M),
+            rng.uniform(-TARGET_XY_RANGE_M, TARGET_XY_RANGE_M),
+            rng.uniform(*TARGET_Z_RANGE_M),
+        ]
+    )
+
+
+def solve_random_target(
+    kinematics: SO101Kinematics,
+    starting_ee_pose: np.ndarray,
+) -> tuple[np.ndarray, dict[str, float], np.ndarray, float]:
+    rng = np.random.default_rng()
+    best_error = float("inf")
+    best_result = None
+
+    for _ in range(MAX_TARGET_ATTEMPTS):
+        target_offset = sample_target_offset(rng)
+        target_ee_pose = translated_pose(starting_ee_pose, target_offset)
+        target_position = kinematics.inverse_kinematics(
+            STARTING_POSITION,
+            target_ee_pose,
+            position_weight=1.0,
+            orientation_weight=0.01,
+            gripper=STARTING_POSITION["gripper"],
+        )
+        solved_pose = kinematics.forward_kinematics(target_position, frame="mujoco")
+        position_error = float(np.linalg.norm(target_ee_pose[:3, 3] - solved_pose[:3, 3]))
+
+        if position_error < best_error:
+            best_error = position_error
+            best_result = (target_ee_pose, target_position, target_offset, position_error)
+
+        if position_error <= IK_POSITION_TOLERANCE_M:
+            return target_ee_pose, target_position, target_offset, position_error
+
+    if best_result is None:
+        raise RuntimeError("Unable to generate a Cartesian IK target.")
+    return best_result
+
+
+def main():
+    model = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
+    data = mujoco.MjData(model)
+
+    kinematics = SO101Kinematics()
+    starting_ee_pose = kinematics.forward_kinematics(STARTING_POSITION, frame="mujoco")
+    target_ee_pose, target_position, target_offset, position_error = solve_random_target(
+        kinematics,
+        starting_ee_pose,
+    )
+
+    print(f"Using kinematics backend: {kinematics.backend_name}")
+    print(
+        "Random target offset: "
+        f"x={target_offset[0]:.3f} m, y={target_offset[1]:.3f} m, z={target_offset[2]:.3f} m"
+    )
+    print(f"IK position error: {position_error:.6f} m")
+    print("Target joint position:")
+    for joint, value in target_position.items():
+        print(f"  {joint}: {value:.3f}")
+
+    set_initial_pose(model, data, STARTING_POSITION)
+
+    with mujoco.viewer.launch_passive(model, data) as viewer:
+        show_target(viewer, target_ee_pose)
+        hold_position(model, data, viewer, duration=1.0)
+        move_to_pose(model, data, viewer, target_position, duration=3.0)
+        hold_position(model, data, viewer, duration=3.0)
+        move_to_pose(model, data, viewer, STARTING_POSITION, duration=3.0)
+        hold_position(model, data, viewer, duration=1.0)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except RuntimeError as exc:
+        if "mjpython" in str(exc):
+            raise SystemExit(
+                "MuJoCo viewer on macOS requires mjpython. Run:\n"
+                "  conda activate whisk-agent\n"
+                "  cd /Users/cadenli/Documents/launchpad/whisk/agent-1\n"
+                "  mjpython run_cartesian_ik_demo.py"
+            ) from exc
+        raise
