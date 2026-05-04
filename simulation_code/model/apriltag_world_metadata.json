@@ -10,7 +10,7 @@
       "site": "tag36h11_00000_site",
       "source_svg": "simulation_code/model/assets/apriltags/tag36h11-0.svg",
       "asset": "simulation_code/model/assets/apriltags/tag36_11_00000.png",
-      "size_m": 0.08,
+      "size_m": 0.01,
       "pos": [
         0.25,
         0.0,

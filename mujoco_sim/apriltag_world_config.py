@@ -10,6 +10,9 @@ APRILTAG_ASSET_DIR = MODEL_DIR / "assets" / "apriltags"
 
 TAG_FAMILY = "tag36h11"
 TAG_THICKNESS_M = 0.002
+TAG_BLACK_SQUARE_FRACTION = 0.80
+DEFAULT_RENDER_WIDTH = 2560
+DEFAULT_RENDER_HEIGHT = 1920
 
 
 @dataclass(frozen=True)
@@ -43,7 +46,7 @@ class CameraSpec:
 APRILTAGS = (
     AprilTagSpec(
         tag_id=0,
-        size_m=0.08,
+        size_m=0.01,
         pos=(0.25, 0.0, TAG_THICKNESS_M),
     ),
 )

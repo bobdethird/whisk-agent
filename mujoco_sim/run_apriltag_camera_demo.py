@@ -6,7 +6,7 @@ from pathlib import Path
 import mujoco  # type: ignore[import-not-found]
 import numpy as np  # type: ignore[import-not-found]
 
-from apriltag_world_config import CAMERAS, METADATA_PATH, SCENE_PATH, TAG_FAMILY
+from apriltag_world_config import CAMERAS, DEFAULT_RENDER_HEIGHT, DEFAULT_RENDER_WIDTH, METADATA_PATH, SCENE_PATH, TAG_FAMILY
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -108,8 +108,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--metadata", type=Path, default=METADATA_PATH, help="World metadata JSON path.")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH, help="Output PNG frame path.")
-    parser.add_argument("--width", type=int, default=1280, help="Render width in pixels.")
-    parser.add_argument("--height", type=int, default=960, help="Render height in pixels.")
+    parser.add_argument("--width", type=int, default=DEFAULT_RENDER_WIDTH, help="Render width in pixels.")
+    parser.add_argument("--height", type=int, default=DEFAULT_RENDER_HEIGHT, help="Render height in pixels.")
     parser.add_argument("--skip-detection", action="store_true", help="Only render the camera frame.")
     return parser.parse_args()
 

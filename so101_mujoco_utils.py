@@ -87,3 +87,11 @@ def hold_position(model, data, viewer, duration):
     while viewer.is_running() and time.time() - start_time < duration:
         send_position_command(data, position_dict)
         step_realtime(model, data, viewer)
+
+
+def hold_position_until_closed(model, data, viewer):
+    position_dict = convert_to_dictionary(data.qpos.copy())
+
+    while viewer.is_running():
+        send_position_command(data, position_dict)
+        step_realtime(model, data, viewer)

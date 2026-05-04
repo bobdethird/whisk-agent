@@ -2,19 +2,27 @@ import argparse
 import math
 from dataclasses import dataclass
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 import mujoco  # type: ignore[import-not-found]
 import mujoco.viewer  # type: ignore[import-not-found]
 import numpy as np  # type: ignore[import-not-found]
 
-from mujoco_sim.apriltag_world_config import APRILTAGS, TAG_FAMILY, TAG_THICKNESS_M
+from mujoco_sim.apriltag_world_config import (
+    APRILTAGS,
+    DEFAULT_RENDER_HEIGHT,
+    DEFAULT_RENDER_WIDTH,
+    TAG_BLACK_SQUARE_FRACTION,
+    TAG_FAMILY,
+    TAG_THICKNESS_M,
+)
 from so101_kinematics import (
     SO101Kinematics,
     pose_from_position_rotation,
     pose_from_target_relative_gripper_angle,
     rotation_error_rad,
 )
-from so101_mujoco_utils import hold_position, move_to_pose, set_initial_pose
+from so101_mujoco_utils import hold_position, hold_position_until_closed, move_to_pose, set_initial_pose
 
 
 ROOT_DIR = Path(__file__).parent
@@ -160,6 +168,40 @@ def render_camera(model: mujoco.MjModel, data: mujoco.MjData, camera_name: str, 
     with mujoco.Renderer(model, height=height, width=width) as renderer:
         renderer.update_scene(data, camera=camera_name)
         return renderer.render()
+
+
+def read_scene_tag_black_square_size(scene_path: Path, tag_name: str) -> float | None:
+    if not scene_path.exists():
+        return None
+
+    root = ET.parse(scene_path).getroot()
+    mesh = root.find(f".//mesh[@name='{tag_name}_mesh']")
+    if mesh is None:
+        return None
+
+    scale = mesh.attrib.get("scale")
+    if scale is None:
+        return None
+
+    values = tuple(float(value) for value in scale.split())
+    if len(values) < 2:
+        return None
+
+    return values[0] * TAG_BLACK_SQUARE_FRACTION
+
+
+def validate_scene_tag_size(scene_path: Path, tag_name: str, detector_tag_size: float) -> None:
+    scene_tag_size = read_scene_tag_black_square_size(scene_path, tag_name)
+    if scene_tag_size is None or math.isclose(scene_tag_size, detector_tag_size, rel_tol=1e-6, abs_tol=1e-6):
+        return
+
+    raise RuntimeError(
+        "AprilTag size mismatch: "
+        f"{scene_path} renders {tag_name} with black-square edge {scene_tag_size:.4f} m, "
+        f"but the detector is using {detector_tag_size:.4f} m. "
+        "Regenerate the MJCF after changing mujoco_sim/apriltag_world_config.py:\n"
+        "  python mujoco_sim/generate_apriltag_world.py"
+    )
 
 
 def camera_params_from_fovy(model: mujoco.MjModel, camera_id: int, width: int, height: int) -> tuple[float, float, float, float]:
@@ -365,15 +407,16 @@ def move(x: float, y: float, z: float, gripper_angle_degrees: float | None = Non
         show_target(viewer, ik_plan.target_pose)
         hold_position(model, data, viewer, duration=1.0)
         move_to_pose(model, data, viewer, ik_plan.target_position, duration=3.0)
-        hold_position(model, data, viewer, duration=3.0)
+        print("Motion complete. Close the MuJoCo viewer window to exit.")
+        hold_position_until_closed(model, data, viewer)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Move SO-101 to an AprilTag pose estimated from a MuJoCo camera.")
     parser.add_argument("--scene", type=Path, default=MODEL_PATH, help="MJCF scene to load.")
     parser.add_argument("--camera", default=DEFAULT_CAMERA, help="Named MuJoCo camera used for tag detection.")
-    parser.add_argument("--width", type=int, default=1280, help="Rendered camera width in pixels.")
-    parser.add_argument("--height", type=int, default=960, help="Rendered camera height in pixels.")
+    parser.add_argument("--width", type=int, default=DEFAULT_RENDER_WIDTH, help="Rendered camera width in pixels.")
+    parser.add_argument("--height", type=int, default=DEFAULT_RENDER_HEIGHT, help="Rendered camera height in pixels.")
     parser.add_argument("--random-tag", action="store_true", help="Randomize the AprilTag pose before detection.")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducible tag placement.")
     parser.add_argument("--tag-name", default=DEFAULT_TAG_NAME, help="MuJoCo body name for the AprilTag.")
@@ -406,6 +449,7 @@ def validate_range(name: str, values: tuple[float, float]) -> tuple[float, float
 
 
 def run_detected_tag_motion(args: argparse.Namespace) -> None:
+    validate_scene_tag_size(args.scene, args.tag_name, args.tag_size)
     model = mujoco.MjModel.from_xml_path(str(args.scene))
     data = mujoco.MjData(model)
     set_initial_pose(model, data, STARTING_POSITION)
@@ -469,7 +513,8 @@ def run_detected_tag_motion(args: argparse.Namespace) -> None:
         show_vision_hover_markers(viewer, model, data, args.camera, target_world_position, ground_truth_hover)
         hold_position(model, data, viewer, duration=1.0)
         move_to_pose(model, data, viewer, ik_plan.target_position, duration=3.0)
-        hold_position(model, data, viewer, duration=3.0)
+        print("Motion complete. Close the MuJoCo viewer window to exit.")
+        hold_position_until_closed(model, data, viewer)
 
 
 if __name__ == "__main__":

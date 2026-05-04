@@ -11,9 +11,12 @@ from apriltag_world_config import (
     APRILTAG_ASSET_DIR,
     APRILTAGS,
     CAMERAS,
+    DEFAULT_RENDER_HEIGHT,
+    DEFAULT_RENDER_WIDTH,
     METADATA_PATH,
     MODEL_DIR,
     SCENE_PATH,
+    TAG_BLACK_SQUARE_FRACTION,
     TAG_FAMILY,
     TAG_THICKNESS_M,
     AprilTagSpec,
@@ -23,7 +26,6 @@ from apriltag_world_config import (
 
 TAG_TEXTURE_SIZE_PX = 640
 TAG_CARD_MESH_FILE = "apriltags/tag_card.obj"
-TAG_BLACK_SQUARE_FRACTION = 0.80
 
 
 def format_floats(values: tuple[float, ...]) -> str:
@@ -169,7 +171,14 @@ def add_visual(root: ET.Element) -> None:
         specular="0 0 0",
     )
     ET.SubElement(visual, "rgba", haze="0.15 0.25 0.35 1")
-    ET.SubElement(visual, "global", azimuth="160", elevation="-20", offwidth="1280", offheight="960")
+    ET.SubElement(
+        visual,
+        "global",
+        azimuth="160",
+        elevation="-20",
+        offwidth=str(DEFAULT_RENDER_WIDTH),
+        offheight=str(DEFAULT_RENDER_HEIGHT),
+    )
 
 
 def add_assets(root: ET.Element, tags: tuple[AprilTagSpec, ...], output_path: Path) -> None:
