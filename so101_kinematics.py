@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np  # type: ignore[import-not-found]
+from lerobot.model.kinematics import RobotKinematics  # type: ignore[import-not-found]
 
 from so101_mujoco_utils import JOINT_ORDER
 
@@ -106,56 +107,12 @@ def mujoco_gripperframe_to_urdf_pose(pose: np.ndarray) -> np.ndarray:
     return pose
 
 
-class _DirectPlacoKinematics:
-    def __init__(self, urdf_path: Path, target_frame_name: str, joint_names: tuple[str, ...]):
-        try:
-            import placo  # type: ignore[import-not-found]
-        except ImportError as exc:
-            raise ImportError(
-                "Direct Placo fallback requires `placo`. Install `lerobot[kinematics]` "
-                "or `placo` in the active environment."
-            ) from exc
-
-        self.robot = placo.RobotWrapper(str(urdf_path))
-        self.solver = placo.KinematicsSolver(self.robot)
-        self.solver.mask_fbase(True)
-        self.target_frame_name = target_frame_name
-        self.joint_names = list(joint_names)
-        self.tip_frame = self.solver.add_frame_task(self.target_frame_name, np.eye(4))
-
-    def forward_kinematics(self, joint_pos_deg: np.ndarray) -> np.ndarray:
-        joint_pos_rad = np.deg2rad(joint_pos_deg[: len(self.joint_names)])
-        for joint_name, joint_value in zip(self.joint_names, joint_pos_rad):
-            self.robot.set_joint(joint_name, joint_value)
-        self.robot.update_kinematics()
-        return self.robot.get_T_world_frame(self.target_frame_name)
-
-    def inverse_kinematics(
-        self,
-        current_joint_pos: np.ndarray,
-        desired_ee_pose: np.ndarray,
-        position_weight: float = 1.0,
-        orientation_weight: float = 0.01,
-    ) -> np.ndarray:
-        current_joint_rad = np.deg2rad(current_joint_pos[: len(self.joint_names)])
-        for joint_name, joint_value in zip(self.joint_names, current_joint_rad):
-            self.robot.set_joint(joint_name, joint_value)
-
-        self.tip_frame.T_world_frame = desired_ee_pose
-        self.tip_frame.configure(self.target_frame_name, "soft", position_weight, orientation_weight)
-        self.solver.solve(True)
-        self.robot.update_kinematics()
-
-        return np.rad2deg([self.robot.get_joint(joint_name) for joint_name in self.joint_names])
-
-
 class SO101Kinematics:
     def __init__(
         self,
         urdf_path: Path | str = DEFAULT_URDF_PATH,
         target_frame_name: str = TARGET_FRAME_NAME,
         joint_names: tuple[str, ...] = ARM_JOINT_ORDER,
-        backend: str = "auto",
     ):
         self.urdf_path = Path(urdf_path)
         if not self.urdf_path.exists():
@@ -163,46 +120,16 @@ class SO101Kinematics:
 
         self.target_frame_name = target_frame_name
         self.joint_names = tuple(joint_names)
-        self.backend_name, self._backend = self._build_backend(backend)
-
-    def _build_backend(self, backend: str):
-        if backend not in {"auto", "lerobot", "placo"}:
-            raise ValueError("backend must be one of: 'auto', 'lerobot', 'placo'.")
-
-        errors = []
-        if backend in {"auto", "lerobot"}:
-            try:
-                from lerobot.model.kinematics import RobotKinematics  # type: ignore[import-not-found]
-
-                return (
-                    "lerobot",
-                    RobotKinematics(
-                        str(self.urdf_path),
-                        target_frame_name=self.target_frame_name,
-                        joint_names=list(self.joint_names),
-                    ),
-                )
-            except Exception as exc:
-                if backend == "lerobot":
-                    raise
-                errors.append(f"LeRobot unavailable: {exc}")
-
-        if backend in {"auto", "placo"}:
-            try:
-                return (
-                    "placo",
-                    _DirectPlacoKinematics(self.urdf_path, self.target_frame_name, self.joint_names),
-                )
-            except Exception as exc:
-                if backend == "placo":
-                    raise
-                errors.append(f"direct Placo unavailable: {exc}")
-
-        raise ImportError("Could not initialize SO-101 kinematics backend. " + " | ".join(errors))
+        self.backend_name = "lerobot"
+        self._kinematics = RobotKinematics(
+            str(self.urdf_path),
+            target_frame_name=self.target_frame_name,
+            joint_names=list(self.joint_names),
+        )
 
     def forward_kinematics(self, position_dict: dict[str, float], frame: str = "mujoco") -> np.ndarray:
         joint_values = joint_dict_to_array(position_dict, self.joint_names)
-        urdf_pose = self._backend.forward_kinematics(joint_values)
+        urdf_pose = self._kinematics.forward_kinematics(joint_values)
         if frame == "urdf":
             return urdf_pose
         if frame == "mujoco":
@@ -230,13 +157,13 @@ class SO101Kinematics:
 
         result = current_joint_values
         for _ in range(max_iterations):
-            result = self._backend.inverse_kinematics(
+            result = self._kinematics.inverse_kinematics(
                 result,
                 desired_ee_pose,
                 position_weight=position_weight,
                 orientation_weight=orientation_weight,
             )
-            solved_pose = self._backend.forward_kinematics(result)
+            solved_pose = self._kinematics.forward_kinematics(result)
             position_error = np.linalg.norm(solved_pose[:3, 3] - desired_ee_pose[:3, 3])
             if position_error <= position_tolerance_m:
                 break

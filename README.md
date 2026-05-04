@@ -158,7 +158,7 @@ conda activate whisk-agent
 python -m pip show mujoco
 ```
 
-If `lerobot` or `placo` cannot be imported, install the kinematics extra:
+If `lerobot` cannot be imported, install the kinematics extra:
 
 ```bash
 python -m pip install "lerobot[kinematics]"
