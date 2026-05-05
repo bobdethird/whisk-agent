@@ -117,7 +117,6 @@ class PickupConfig:
     place_success_z_tolerance: float = 0.04
     debug_camera_frame_dir: Path | None = CUP_DEBUG_FRAME_DIR
     allow_config_position_fallback: bool = False
-    apriltag_refresh_interval: float = 0.25
 
 
 @dataclass(frozen=True)
@@ -265,21 +264,6 @@ class CupTargetPoints:
     green_center: np.ndarray
     blue_pregrasp: np.ndarray
     tag_estimate: TagPoseEstimate | None
-
-
-@dataclass(frozen=True)
-class CupPoseObservation:
-    center: np.ndarray
-    tag_estimate: TagPoseEstimate
-    observed_at: float
-
-
-@dataclass
-class AprilTagTrackingState:
-    config: PickupConfig
-    cups: tuple[CupSpec, ...]
-    latest_cup_observations: dict[str, CupPoseObservation] = field(default_factory=dict)
-    last_refresh_time: float = -math.inf
 
 
 @dataclass(frozen=True)
@@ -488,12 +472,10 @@ def _step_once(
     viewer: mujoco.viewer.Handle | None,
     realtime: bool,
     debug_overlay: ViewerDebugOverlay | None = None,
-    tracking: AprilTagTrackingState | None = None,
 ) -> bool:
     step_start = time.time()
     mujoco.mj_step(env.model, env.data)
     diagnostics.update(env.data)
-    _refresh_apriltag_tracking(env, tracking)
 
     if viewer is not None:
         if debug_overlay is not None:
@@ -517,7 +499,6 @@ def command_motion(
     viewer: mujoco.viewer.Handle | None = None,
     realtime: bool = False,
     debug_overlay: ViewerDebugOverlay | None = None,
-    tracking: AprilTagTrackingState | None = None,
 ) -> bool:
     start_position = convert_to_dictionary(env.data.qpos.copy())
     steps = max(1, math.ceil(duration / env.model.opt.timestep))
@@ -526,7 +507,7 @@ def command_motion(
         alpha = (step_index + 1) / steps
         command = _interpolate_position(start_position, target_position, alpha)
         send_position_command(env.data, command)
-        if not _step_once(env, diagnostics, viewer, realtime, debug_overlay, tracking):
+        if not _step_once(env, diagnostics, viewer, realtime, debug_overlay):
             return False
 
     env.current_position = dict(target_position)
@@ -541,12 +522,11 @@ def hold_command(
     viewer: mujoco.viewer.Handle | None = None,
     realtime: bool = False,
     debug_overlay: ViewerDebugOverlay | None = None,
-    tracking: AprilTagTrackingState | None = None,
 ) -> bool:
     steps = max(1, math.ceil(duration / env.model.opt.timestep))
     for _ in range(steps):
         send_position_command(env.data, target_position)
-        if not _step_once(env, diagnostics, viewer, realtime, debug_overlay, tracking):
+        if not _step_once(env, diagnostics, viewer, realtime, debug_overlay):
             return False
     env.current_position = dict(target_position)
     return True
@@ -560,7 +540,6 @@ def hold_until_gripper_cup_contacts_clear(
     viewer: mujoco.viewer.Handle | None = None,
     realtime: bool = False,
     debug_overlay: ViewerDebugOverlay | None = None,
-    tracking: AprilTagTrackingState | None = None,
 ) -> bool:
     steps = max(1, math.ceil(duration / env.model.opt.timestep))
     for _ in range(steps):
@@ -568,7 +547,7 @@ def hold_until_gripper_cup_contacts_clear(
             env.current_position = dict(target_position)
             return True
         send_position_command(env.data, target_position)
-        if not _step_once(env, diagnostics, viewer, realtime, debug_overlay, tracking):
+        if not _step_once(env, diagnostics, viewer, realtime, debug_overlay):
             return False
 
     env.current_position = dict(target_position)
@@ -664,60 +643,45 @@ def _fuse_equal_weight_tag_estimates(estimates: list[TagPoseEstimate]) -> TagPos
     )
 
 
-def _cup_observation_from_estimates(
+def estimate_cup_center_from_tag(
     env: SimEnv,
+    config: PickupConfig,
     cup: CupSpec,
-    estimates: list[TagPoseEstimate],
-) -> CupPoseObservation:
+) -> tuple[np.ndarray, TagPoseEstimate | None]:
+    try:
+        estimates = _detect_tag_estimates(
+            env,
+            tag_id=cup.tag_id,
+            tag_size=config.cup_tag_size,
+            camera_names=config.cup_tag_camera_names,
+            debug_frame_dir=config.debug_camera_frame_dir,
+        )
+    except Exception as exc:
+        if not config.allow_config_position_fallback:
+            raise
+        print(f"{cup.label} tag detection failed ({exc}); using configured cup position fallback")
+        return np.array(cup.initial_position, dtype=float), None
+
+    if not estimates:
+        if config.allow_config_position_fallback:
+            print(f"{cup.label} tag not detected; using configured cup position fallback")
+            return np.array(cup.initial_position, dtype=float), None
+        raise RuntimeError(
+            f"{cup.label.title()} AprilTag {cup.tag_id} was not detected from cameras: "
+            + ", ".join(config.cup_tag_camera_names)
+        )
+
     estimate = _fuse_equal_weight_tag_estimates(estimates)
     tag_to_cup_center = np.asarray(cup.tag_to_cup_center_offset, dtype=float)
     if tag_to_cup_center.shape != (3,):
         raise ValueError("tag_to_cup_center_offset must contain exactly three values.")
 
     green_center = estimate.world_position + estimate.world_rotation @ tag_to_cup_center
-    return CupPoseObservation(
-        center=green_center,
-        tag_estimate=estimate,
-        observed_at=float(env.data.time),
-    )
-
-
-def _detect_cup_observation(env: SimEnv, config: PickupConfig, cup: CupSpec) -> tuple[CupPoseObservation | None, list[TagPoseEstimate]]:
-    estimates = _detect_tag_estimates(
-        env,
-        tag_id=cup.tag_id,
-        tag_size=config.cup_tag_size,
-        camera_names=config.cup_tag_camera_names,
-        debug_frame_dir=config.debug_camera_frame_dir,
-    )
-    if not estimates:
-        return None, estimates
-    return _cup_observation_from_estimates(env, cup, estimates), estimates
-
-
-def _remember_cup_observation(tracking: AprilTagTrackingState | None, cup: CupSpec, observation: CupPoseObservation) -> None:
-    if tracking is not None:
-        tracking.latest_cup_observations[cup.label] = observation
-
-
-def _latest_cup_observation(tracking: AprilTagTrackingState | None, cup: CupSpec) -> CupPoseObservation | None:
-    if tracking is None:
-        return None
-    return tracking.latest_cup_observations.get(cup.label)
-
-
-def _print_cup_observation(
-    env: SimEnv,
-    cup: CupSpec,
-    observation: CupPoseObservation,
-    estimates: list[TagPoseEstimate],
-) -> None:
-    estimate = observation.tag_estimate
     print(
         f"{cup.label} tag: "
         f"id={estimate.tag_id} cameras={estimate.camera_name} "
         f"tag={_format_xyz(estimate.world_position)} m "
-        f"green_center={_format_xyz(observation.center)} m"
+        f"green_center={_format_xyz(green_center)} m"
     )
     if len(estimates) > 1:
         print(f"  fused {len(estimates)} camera estimates with equal weights")
@@ -730,64 +694,7 @@ def _print_cup_observation(
             f"tag={_format_xyz(contributor.world_position)} m "
             f"error={contributor.pose_error:.6f}"
         )
-
-
-def _refresh_apriltag_tracking(env: SimEnv, tracking: AprilTagTrackingState | None, force: bool = False) -> None:
-    if tracking is None:
-        return
-
-    now = float(env.data.time)
-    interval = max(0.0, tracking.config.apriltag_refresh_interval)
-    if not force and now - tracking.last_refresh_time < interval:
-        return
-
-    tracking.last_refresh_time = now
-    for cup in tracking.cups:
-        try:
-            observation, _ = _detect_cup_observation(env, tracking.config, cup)
-        except Exception:
-            continue
-        if observation is not None:
-            tracking.latest_cup_observations[cup.label] = observation
-
-
-def estimate_cup_center_from_tag(
-    env: SimEnv,
-    config: PickupConfig,
-    cup: CupSpec,
-    tracking: AprilTagTrackingState | None = None,
-) -> tuple[np.ndarray, TagPoseEstimate | None]:
-    try:
-        observation, estimates = _detect_cup_observation(env, config, cup)
-    except Exception as exc:
-        latest_observation = _latest_cup_observation(tracking, cup)
-        if latest_observation is not None:
-            print(
-                f"{cup.label} tag detection failed ({exc}); "
-                f"using latest tracked pose from t={latest_observation.observed_at:.3f}s"
-            )
-            return latest_observation.center.copy(), latest_observation.tag_estimate
-        if not config.allow_config_position_fallback:
-            raise
-        print(f"{cup.label} tag detection failed ({exc}); using configured cup position fallback")
-        return np.array(cup.initial_position, dtype=float), None
-
-    if observation is None:
-        latest_observation = _latest_cup_observation(tracking, cup)
-        if latest_observation is not None:
-            print(f"{cup.label} tag not detected; using latest tracked pose from t={latest_observation.observed_at:.3f}s")
-            return latest_observation.center.copy(), latest_observation.tag_estimate
-        if config.allow_config_position_fallback:
-            print(f"{cup.label} tag not detected; using configured cup position fallback")
-            return np.array(cup.initial_position, dtype=float), None
-        raise RuntimeError(
-            f"{cup.label.title()} AprilTag {cup.tag_id} was not detected from cameras: "
-            + ", ".join(config.cup_tag_camera_names)
-        )
-
-    _remember_cup_observation(tracking, cup, observation)
-    _print_cup_observation(env, cup, observation, estimates)
-    return observation.center.copy(), observation.tag_estimate
+    return green_center, estimate
 
 
 def estimate_place_target_center(env: SimEnv, config: PickupConfig) -> tuple[np.ndarray, TagPoseEstimate | None]:
@@ -847,14 +754,9 @@ def target_points_from_cup_center(
     return CupTargetPoints(green_center=green_center, blue_pregrasp=blue_pregrasp, tag_estimate=tag_estimate)
 
 
-def estimate_cup_target_points(
-    env: SimEnv,
-    config: PickupConfig,
-    cup: CupSpec | None = None,
-    tracking: AprilTagTrackingState | None = None,
-) -> CupTargetPoints:
+def estimate_cup_target_points(env: SimEnv, config: PickupConfig, cup: CupSpec | None = None) -> CupTargetPoints:
     cup = primary_cup_spec(config) if cup is None else cup
-    green_center, tag_estimate = estimate_cup_center_from_tag(env, config, cup, tracking=tracking)
+    green_center, tag_estimate = estimate_cup_center_from_tag(env, config, cup)
     return target_points_from_cup_center(green_center, config, tag_estimate)
 
 
@@ -1010,10 +912,9 @@ def execute_pickup(
     cup: CupSpec | None = None,
     viewer: mujoco.viewer.Handle | None = None,
     realtime: bool = False,
-    tracking: AprilTagTrackingState | None = None,
 ) -> PickupResult:
     cup = primary_cup_spec(config) if cup is None else cup
-    target_points = estimate_cup_target_points(env, config, cup, tracking=tracking)
+    target_points = estimate_cup_target_points(env, config, cup)
     pregrasp_xyz = target_points.blue_pregrasp
     approach_xyz = pregrasp_xyz + np.array([0.0, 0.0, config.approach_height], dtype=float)
     lift_xyz = pregrasp_xyz + np.array([0.0, 0.0, config.lift_height], dtype=float)
@@ -1041,7 +942,6 @@ def execute_pickup(
         viewer,
         realtime,
         debug_overlay,
-        tracking,
     ):
         return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
 
@@ -1054,7 +954,6 @@ def execute_pickup(
         viewer,
         realtime,
         debug_overlay,
-        tracking,
     ):
         return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
 
@@ -1068,7 +967,6 @@ def execute_pickup(
         viewer,
         realtime,
         debug_overlay,
-        tracking,
     ):
         return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
     if not hold_command(
@@ -1079,7 +977,6 @@ def execute_pickup(
         viewer,
         realtime,
         debug_overlay,
-        tracking,
     ):
         return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
 
@@ -1092,7 +989,6 @@ def execute_pickup(
         viewer,
         realtime,
         debug_overlay,
-        tracking,
     ):
         return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
     hold_command(
@@ -1103,7 +999,6 @@ def execute_pickup(
         viewer,
         realtime,
         debug_overlay,
-        tracking,
     )
     return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
 
@@ -1116,8 +1011,14 @@ def execute_place(
     target_center: np.ndarray,
     viewer: mujoco.viewer.Handle | None = None,
     realtime: bool = False,
-    tracking: AprilTagTrackingState | None = None,
 ) -> PlacementResult:
+    target_xy = np.asarray(target_center[:2], dtype=float)
+    target_xy_norm = float(np.linalg.norm(target_xy))
+    if target_xy_norm > 1e-6:
+        retreat_direction = -target_xy / target_xy_norm
+    else:
+        retreat_direction = np.array([-1.0, 0.0], dtype=float)
+
     release_xyz = target_center + pickup_result.grasp_offset
     approach_xyz = release_xyz + np.array([0.0, 0.0, config.place_approach_height], dtype=float)
     debug_overlay = ViewerDebugOverlay(
@@ -1138,7 +1039,6 @@ def execute_place(
         viewer,
         realtime,
         debug_overlay,
-        tracking,
     ):
         return _placement_result(env, config, diagnostics, target_center)
 
@@ -1151,19 +1051,11 @@ def execute_place(
         viewer,
         realtime,
         debug_overlay,
-        tracking,
     ):
         return _placement_result(env, config, diagnostics, target_center)
 
-    retreat_xy = pickup_result.grasp_offset[:2]
-    retreat_norm = np.linalg.norm(retreat_xy)
-    retreat_direction = retreat_xy / retreat_norm if retreat_norm > 1e-6 else None
-
-    release_clear_xyz = release_xyz.copy()
-    if retreat_direction is not None:
-        release_clear_xyz[:2] += retreat_direction * config.release_clearance
-
-    open_position = solve_target(env, release_clear_xyz, OPEN_GRIPPER, config.ik_tool_point)
+    open_position = dict(release_position)
+    open_position["gripper"] = OPEN_GRIPPER
     if not command_motion(
         env,
         open_position,
@@ -1172,22 +1064,19 @@ def execute_place(
         viewer,
         realtime,
         debug_overlay,
-        tracking,
     ):
         return _placement_result(env, config, diagnostics, target_center)
-    if not hold_until_gripper_cup_contacts_clear(
+    hold_command(
         env,
         open_position,
-        max(config.squeeze_duration, config.release_contact_settle_duration),
+        config.release_contact_settle_duration,
         diagnostics,
         viewer,
         realtime,
         debug_overlay,
-        tracking,
-    ):
-        return _placement_result(env, config, diagnostics, target_center)
+    )
 
-    retreat_xyz = release_clear_xyz + np.array([0.0, 0.0, config.place_approach_height], dtype=float)
+    retreat_xyz = release_xyz + np.array([0.0, 0.0, config.place_approach_height], dtype=float)
     retreat_position = solve_target(env, retreat_xyz, OPEN_GRIPPER, config.ik_tool_point)
     if not command_motion(
         env,
@@ -1197,14 +1086,24 @@ def execute_place(
         viewer,
         realtime,
         debug_overlay,
-        tracking,
+    ):
+        return _placement_result(env, config, diagnostics, target_center)
+    if not hold_until_gripper_cup_contacts_clear(
+        env,
+        retreat_position,
+        config.release_contact_settle_duration,
+        diagnostics,
+        viewer,
+        realtime,
+        debug_overlay,
     ):
         return _placement_result(env, config, diagnostics, target_center)
 
     final_retreat_position = retreat_position
-    if retreat_direction is not None and config.place_lateral_retreat > config.release_clearance:
+    lateral_retreat_distance = max(config.release_clearance, config.place_lateral_retreat)
+    if lateral_retreat_distance > 0.0:
         elevated_lateral_retreat_xyz = retreat_xyz.copy()
-        elevated_lateral_retreat_xyz[:2] = release_xyz[:2] + retreat_direction * config.place_lateral_retreat
+        elevated_lateral_retreat_xyz[:2] = release_xyz[:2] + retreat_direction * lateral_retreat_distance
         final_retreat_position = solve_target(env, elevated_lateral_retreat_xyz, OPEN_GRIPPER, config.ik_tool_point)
         command_motion(
             env,
@@ -1214,7 +1113,6 @@ def execute_place(
             viewer,
             realtime,
             debug_overlay,
-            tracking,
         )
 
     hold_command(
@@ -1225,7 +1123,6 @@ def execute_place(
         viewer,
         realtime,
         debug_overlay,
-        tracking,
     )
     return _placement_result(env, config, diagnostics, target_center)
 
@@ -1273,33 +1170,21 @@ def _placement_result(
 def run_pickup(config: PickupConfig, launch_viewer: bool) -> PickupResult:
     env = create_env(scene_path=config.scene_path)
     diagnostics = configure_pickup_env(env, config)
-    tracking = AprilTagTrackingState(config=config, cups=(primary_cup_spec(config),))
-    _refresh_apriltag_tracking(env, tracking, force=True)
 
     if not launch_viewer:
-        return execute_pickup(env, config, diagnostics, realtime=False, tracking=tracking)
+        return execute_pickup(env, config, diagnostics, realtime=False)
 
     with mujoco.viewer.launch_passive(env.model, env.data) as viewer:
         env.viewer = viewer
-        return execute_pickup(env, config, diagnostics, viewer=viewer, realtime=True, tracking=tracking)
+        return execute_pickup(env, config, diagnostics, viewer=viewer, realtime=True)
 
 
-def _stack_target_center(
-    env: SimEnv,
-    config: PickupConfig,
-    lower_cup: CupSpec,
-    tracking: AprilTagTrackingState,
-) -> np.ndarray:
-    lower_center, _ = estimate_cup_center_from_tag(env, config, lower_cup, tracking=tracking)
-    target_center = np.array(
+def _stack_target_center(env: SimEnv, config: PickupConfig, lower_cup_diagnostics: ContactDiagnostics) -> np.ndarray:
+    lower_center = env.data.xpos[lower_cup_diagnostics.cup_body_id].copy()
+    return np.array(
         [lower_center[0], lower_center[1], lower_center[2] + 2.0 * config.cup_half_height],
         dtype=float,
     )
-    print(
-        f"stack target from latest {lower_cup.label} AprilTag: "
-        f"lower_center={_format_xyz(lower_center)} m target={_format_xyz(target_center)} m"
-    )
-    return target_center
 
 
 def execute_pick_place_stack_sequence(
@@ -1313,19 +1198,9 @@ def execute_pick_place_stack_sequence(
     second_cup = second_cup_spec(config)
     first_diagnostics = diagnostics_by_label[first_cup.label]
     second_diagnostics = diagnostics_by_label[second_cup.label]
-    tracking = AprilTagTrackingState(config=config, cups=(first_cup, second_cup))
-    _refresh_apriltag_tracking(env, tracking, force=True)
 
     ground_target_center, _ = estimate_place_target_center(env, config)
-    first_pickup = execute_pickup(
-        env,
-        config,
-        first_diagnostics,
-        first_cup,
-        viewer=viewer,
-        realtime=realtime,
-        tracking=tracking,
-    )
+    first_pickup = execute_pickup(env, config, first_diagnostics, first_cup, viewer=viewer, realtime=realtime)
     if not first_pickup.success:
         return CupStackSequenceResult(first_pickup, None, None, None)
 
@@ -1337,26 +1212,15 @@ def execute_pick_place_stack_sequence(
         ground_target_center,
         viewer=viewer,
         realtime=realtime,
-        tracking=tracking,
     )
     if not first_place.success:
         return CupStackSequenceResult(first_pickup, first_place, None, None)
 
-    estimate_cup_center_from_tag(env, config, first_cup, tracking=tracking)
-
-    second_pickup = execute_pickup(
-        env,
-        config,
-        second_diagnostics,
-        second_cup,
-        viewer=viewer,
-        realtime=realtime,
-        tracking=tracking,
-    )
+    second_pickup = execute_pickup(env, config, second_diagnostics, second_cup, viewer=viewer, realtime=realtime)
     if not second_pickup.success:
         return CupStackSequenceResult(first_pickup, first_place, second_pickup, None)
 
-    stack_target_center = _stack_target_center(env, config, first_cup, tracking)
+    stack_target_center = _stack_target_center(env, config, first_diagnostics)
     stack_place = execute_place(
         env,
         config,
@@ -1365,7 +1229,6 @@ def execute_pick_place_stack_sequence(
         stack_target_center,
         viewer=viewer,
         realtime=realtime,
-        tracking=tracking,
     )
     return CupStackSequenceResult(first_pickup, first_place, second_pickup, stack_place)
 
@@ -1669,12 +1532,6 @@ def parse_args() -> argparse.Namespace:
         help="Use --cup-position if the cup AprilTag is not detected.",
     )
     parser.add_argument(
-        "--apriltag-refresh-interval",
-        type=float,
-        default=0.25,
-        help="Seconds of simulation time between background cup AprilTag pose refreshes; use 0 to refresh every step.",
-    )
-    parser.add_argument(
         "--debug-camera-frame-dir",
         type=Path,
         default=CUP_DEBUG_FRAME_DIR,
@@ -1731,7 +1588,6 @@ def config_from_args(
         place_success_z_tolerance=args.place_success_z_tolerance,
         debug_camera_frame_dir=None if args.no_debug_camera_frames else args.debug_camera_frame_dir,
         allow_config_position_fallback=args.allow_config_cup_position_fallback,
-        apriltag_refresh_interval=args.apriltag_refresh_interval,
     )
 
 
