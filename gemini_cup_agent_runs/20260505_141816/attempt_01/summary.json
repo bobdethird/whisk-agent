@@ -1,0 +1,249 @@
+{
+  "attempt_index": 1,
+  "evaluation": {
+    "failure_reasons": [
+      "first cup final pose outside placement tolerance (xy_error=0.0244 m, z_error=0.0923 m)",
+      "second cup lift delta -inf m below threshold 0.0350 m",
+      "second cup is not stacked on the first cup within tolerance (xy_error=0.1540 m, z_error=0.2395 m)",
+      "gripper is not open enough (gripper=20.49)",
+      "one or more cups still appear held or touching the gripper"
+    ],
+    "first_contact_diagnostics": {
+      "both_jaw_contact_steps": 1729,
+      "contact_pairs_seen": [
+        {
+          "cup_geom": "cup_collision_00",
+          "other_geom": "work_table_top"
+        },
+        {
+          "cup_geom": "cup_collision_02",
+          "other_geom": "fixed_jaw_box3"
+        },
+        {
+          "cup_geom": "cup_collision_02",
+          "other_geom": "fixed_jaw_box4"
+        },
+        {
+          "cup_geom": "cup_collision_02",
+          "other_geom": "fixed_jaw_grip_pad"
+        },
+        {
+          "cup_geom": "cup_collision_02",
+          "other_geom": "fixed_jaw_sph_tip1"
+        },
+        {
+          "cup_geom": "cup_collision_02",
+          "other_geom": "fixed_jaw_sph_tip2"
+        },
+        {
+          "cup_geom": "cup_collision_02",
+          "other_geom": "fixed_jaw_sph_tip3"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "other_geom": "fixed_jaw_box3"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "other_geom": "fixed_jaw_box4"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "other_geom": "fixed_jaw_grip_pad"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "other_geom": "fixed_jaw_sph_tip1"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "other_geom": "fixed_jaw_sph_tip2"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "other_geom": "fixed_jaw_sph_tip3"
+        },
+        {
+          "cup_geom": "cup_collision_04",
+          "other_geom": "camera_box2"
+        },
+        {
+          "cup_geom": "cup_collision_04",
+          "other_geom": "fixed_jaw_box1"
+        },
+        {
+          "cup_geom": "cup_collision_07",
+          "other_geom": "moving_jaw_box2"
+        },
+        {
+          "cup_geom": "cup_collision_07",
+          "other_geom": "moving_jaw_box3"
+        },
+        {
+          "cup_geom": "cup_collision_07",
+          "other_geom": "moving_jaw_grip_pad"
+        },
+        {
+          "cup_geom": "cup_collision_07",
+          "other_geom": "moving_jaw_sph_tip2"
+        },
+        {
+          "cup_geom": "cup_collision_07",
+          "other_geom": "moving_jaw_sph_tip3"
+        },
+        {
+          "cup_geom": "cup_collision_07",
+          "other_geom": "second_cup_collision_01"
+        },
+        {
+          "cup_geom": "cup_collision_07",
+          "other_geom": "second_cup_collision_02"
+        },
+        {
+          "cup_geom": "cup_collision_08",
+          "other_geom": "camera_box2"
+        },
+        {
+          "cup_geom": "cup_collision_08",
+          "other_geom": "moving_jaw_grip_pad"
+        },
+        {
+          "cup_geom": "cup_collision_08",
+          "other_geom": "second_cup_collision_01"
+        },
+        {
+          "cup_geom": "cup_collision_08",
+          "other_geom": "second_cup_collision_02"
+        }
+      ],
+      "cup_contact_steps": 3999,
+      "cup_label": "first cup",
+      "current_gripper_cup_contacts": [
+        {
+          "cup_geom": "cup_collision_03",
+          "gripper_geom": "fixed_jaw_sph_tip1"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "gripper_geom": "fixed_jaw_sph_tip2"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "gripper_geom": "fixed_jaw_sph_tip3"
+        },
+        {
+          "cup_geom": "cup_collision_02",
+          "gripper_geom": "fixed_jaw_box3"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "gripper_geom": "fixed_jaw_box3"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "gripper_geom": "fixed_jaw_box3"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "gripper_geom": "fixed_jaw_box3"
+        },
+        {
+          "cup_geom": "cup_collision_02",
+          "gripper_geom": "fixed_jaw_box4"
+        },
+        {
+          "cup_geom": "cup_collision_02",
+          "gripper_geom": "fixed_jaw_box4"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "gripper_geom": "fixed_jaw_box4"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "gripper_geom": "fixed_jaw_grip_pad"
+        },
+        {
+          "cup_geom": "cup_collision_07",
+          "gripper_geom": "moving_jaw_sph_tip2"
+        },
+        {
+          "cup_geom": "cup_collision_07",
+          "gripper_geom": "moving_jaw_box2"
+        },
+        {
+          "cup_geom": "cup_collision_07",
+          "gripper_geom": "moving_jaw_grip_pad"
+        },
+        {
+          "cup_geom": "cup_collision_08",
+          "gripper_geom": "moving_jaw_grip_pad"
+        },
+        {
+          "cup_geom": "cup_collision_08",
+          "gripper_geom": "moving_jaw_grip_pad"
+        }
+      ],
+      "fixed_contact_steps": 1758,
+      "max_contacts": 16,
+      "max_cup_z_m": 0.17801,
+      "moving_contact_steps": 1744,
+      "steps": 4000
+    },
+    "first_cup_label": "first cup",
+    "first_final_center_m": [
+      0.45691,
+      -0.06243,
+      0.16585
+    ],
+    "first_lift_delta_m": 0.104446,
+    "first_max_cup_z_m": 0.17801,
+    "first_target_center_m": [
+      0.44,
+      -0.08,
+      0.07357
+    ],
+    "first_xy_error_m": 0.024385,
+    "first_z_error_m": 0.09228,
+    "gripper_open": false,
+    "gripper_position": 20.48753,
+    "held_cup_label": "first cup",
+    "lift_delta_m": -Infinity,
+    "released": false,
+    "second_contact_diagnostics": {
+      "both_jaw_contact_steps": 0,
+      "contact_pairs_seen": [],
+      "cup_contact_steps": 0,
+      "cup_label": "second cup",
+      "current_gripper_cup_contacts": [],
+      "fixed_contact_steps": 0,
+      "max_contacts": 0,
+      "max_cup_z_m": -Infinity,
+      "moving_contact_steps": 0,
+      "steps": 0
+    },
+    "second_cup_label": "second cup",
+    "second_final_center_m": [
+      0.34006,
+      -0.16279,
+      0.07349
+    ],
+    "second_lift_delta_m": -Infinity,
+    "second_max_cup_z_m": -Infinity,
+    "second_target_center_m": [
+      0.45691,
+      -0.06243,
+      0.31298
+    ],
+    "stack_xy_error_m": 0.154032,
+    "stack_z_error_m": 0.239487,
+    "success": false,
+    "task": "cup_stack",
+    "xy_error_m": 0.154032,
+    "z_error_m": 0.239487
+  },
+  "guidance": "Follow the deterministic cup stacking policy one closed-loop phase at a time unless recovery is needed: pick/lift first cup; after fresh observation, place/release first cup on tag 0 and return to origin; after fresh observation, pick/lift second cup; after fresh observation, place the second cup on tag 6 with tool_point='claw_center' and open_gripper(duration=2.0). Use raw XYZ only for recovery. Return only the next phase, not the full task.",
+  "plan_only": false,
+  "step_count": 6,
+  "success": false
+}

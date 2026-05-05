@@ -1,0 +1,80 @@
+{
+  "agent_mode": "tools",
+  "attempt_index": 1,
+  "evaluation": {
+    "failure_reasons": [
+      "first cup lift delta -inf m below threshold 0.0350 m",
+      "first cup final pose outside placement tolerance (xy_error=0.1442 m, z_error=0.0000 m)",
+      "second cup lift delta -inf m below threshold 0.0350 m",
+      "second cup is not stacked on the first cup within tolerance (xy_error=0.1400 m, z_error=0.1471 m)"
+    ],
+    "first_contact_diagnostics": {
+      "both_jaw_contact_steps": 0,
+      "contact_pairs_seen": [],
+      "cup_contact_steps": 0,
+      "cup_label": "first cup",
+      "current_gripper_cup_contacts": [],
+      "fixed_contact_steps": 0,
+      "max_contacts": 0,
+      "max_cup_z_m": -Infinity,
+      "moving_contact_steps": 0,
+      "steps": 0
+    },
+    "first_cup_label": "first cup",
+    "first_final_center_m": [
+      0.32,
+      0.0,
+      0.07357
+    ],
+    "first_lift_delta_m": -Infinity,
+    "first_max_cup_z_m": -Infinity,
+    "first_target_center_m": [
+      0.44,
+      -0.08,
+      0.07357
+    ],
+    "first_xy_error_m": 0.144222,
+    "first_z_error_m": 0.0,
+    "gripper_open": true,
+    "gripper_position": 55.6,
+    "held_cup_label": null,
+    "lift_delta_m": -Infinity,
+    "released": true,
+    "second_contact_diagnostics": {
+      "both_jaw_contact_steps": 0,
+      "contact_pairs_seen": [],
+      "cup_contact_steps": 0,
+      "cup_label": "second cup",
+      "current_gripper_cup_contacts": [],
+      "fixed_contact_steps": 0,
+      "max_contacts": 0,
+      "max_cup_z_m": -Infinity,
+      "moving_contact_steps": 0,
+      "steps": 0
+    },
+    "second_cup_label": "second cup",
+    "second_final_center_m": [
+      0.32,
+      -0.14,
+      0.07357
+    ],
+    "second_lift_delta_m": -Infinity,
+    "second_max_cup_z_m": -Infinity,
+    "second_target_center_m": [
+      0.32,
+      0.0,
+      0.2207
+    ],
+    "stack_xy_error_m": 0.14,
+    "stack_z_error_m": 0.147131,
+    "success": false,
+    "task": "cup_stack",
+    "xy_error_m": 0.144222,
+    "z_error_m": 0.147131
+  },
+  "guidance": "Follow the deterministic cup stacking policy one closed-loop phase at a time unless recovery is needed: pick/lift first cup; after fresh observation, place/release first cup on tag 0 and return to origin; after fresh observation, pick/lift second cup; after fresh observation, place the second cup on tag 6 with tool_point='claw_center' and open_gripper(duration=2.0). Use raw XYZ only for recovery. Return only the next phase, not the full task.",
+  "plan_only": false,
+  "step_count": 6,
+  "success": false,
+  "task": "cup_stack"
+}

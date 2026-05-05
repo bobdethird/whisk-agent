@@ -44,7 +44,7 @@ from mujoco_sim.path_planning import (
     plan_joint_path,
 )
 from pose_estimation import TagPoseEstimate, detect_apriltags
-from sim_env import SimEnv, create_env
+from sim_env import HORIZONTAL_WRIST_ROLL_DEGREES, SimEnv, create_env
 from so101_kinematics import CLAW_CENTER_TOOL_POINT, FIXED_JAW_TOOL_POINT, ToolPointName
 from so101_mujoco_utils import JOINT_ORDER, convert_to_dictionary, send_position_command
 
@@ -117,6 +117,13 @@ class PickupConfig:
     place_approach_height: float = 0.08
     release_clearance: float = 0.03
     release_contact_settle_duration: float = 0.25
+    stack_release_open_duration: float = 2.0
+    stack_release_settle_duration: float = 0.5
+    pour_height: float = 0.02
+    pour_lateral_offset: float = 0.0
+    pour_tilt_degrees: float = 75.0
+    pour_duration: float = 1.25
+    pour_hold_duration: float = 1.0
     place_lateral_retreat: float = 0.06
     place_success_xy_tolerance: float = 0.04
     place_success_z_tolerance: float = 0.04
@@ -1490,6 +1497,95 @@ def _stack_target_center(env: SimEnv, config: PickupConfig, lower_cup_diagnostic
     )
 
 
+def _joint_degrees_clamped(env: SimEnv, joint_name: str, value: float) -> float:
+    joint_id = _require_id(env.model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
+    lower, upper = env.model.jnt_range[joint_id]
+    return float(np.clip(value, np.rad2deg(lower), np.rad2deg(upper)))
+
+
+def _pour_target_center(
+    env: SimEnv,
+    config: PickupConfig,
+    held_diagnostics: ContactDiagnostics,
+    receiver_diagnostics: ContactDiagnostics,
+) -> np.ndarray:
+    receiver_center = env.data.xpos[receiver_diagnostics.cup_body_id].copy()
+    held_center = env.data.xpos[held_diagnostics.cup_body_id].copy()
+    offset_xy = held_center[:2] - receiver_center[:2]
+    offset_norm = float(np.linalg.norm(offset_xy))
+    if offset_norm <= 1e-6:
+        offset_xy = receiver_center[:2].copy()
+        offset_norm = float(np.linalg.norm(offset_xy))
+    pour_direction = offset_xy / offset_norm if offset_norm > 1e-6 else np.array([1.0, 0.0], dtype=float)
+    target_center = receiver_center.copy()
+    # The pour rotation is about the held cup center. Keep that center half a
+    # cup-height back so the tilted rim/top, not the center, reaches the receiver.
+    rim_alignment_offset = config.cup_half_height + config.pour_lateral_offset
+    target_center[:2] = receiver_center[:2] + pour_direction * rim_alignment_offset
+    target_center[2] = receiver_center[2] + config.cup_half_height + config.pour_height
+    return target_center
+
+
+def execute_pour(
+    env: SimEnv,
+    config: PickupConfig,
+    diagnostics: ContactDiagnostics,
+    pickup_result: PickupResult,
+    receiver_diagnostics: ContactDiagnostics,
+    receiver_cup: CupSpec,
+    cup: CupSpec,
+    viewer: mujoco.viewer.Handle | None = None,
+    realtime: bool = False,
+) -> PlacementResult:
+    target_center = _pour_target_center(env, config, diagnostics, receiver_diagnostics)
+    pour_xyz = target_center + pickup_result.grasp_offset
+    approach_position = solve_target(env, pour_xyz, CLOSED_GRIPPER, config.ik_tool_point)
+    collision_context = planner_context_for_cup(
+        diagnostics,
+        cup,
+        attach_cup=True,
+        allow_gripper_cup_contact=True,
+        allowed_support_body_names=(receiver_cup.body_name,),
+    )
+    success = command_motion(
+        env,
+        approach_position,
+        config.approach_duration,
+        diagnostics,
+        viewer,
+        realtime,
+        planner_config=config.motion_planner,
+        collision_context=collision_context,
+    )
+    tilt_position = dict(env.current_position)
+    if success:
+        tilt_position["wrist_roll"] = _joint_degrees_clamped(
+            env,
+            "wrist_roll",
+            HORIZONTAL_WRIST_ROLL_DEGREES + config.pour_tilt_degrees,
+        )
+        success = command_motion(
+            env,
+            tilt_position,
+            config.pour_duration,
+            diagnostics,
+            viewer,
+            realtime,
+            collision_context=collision_context,
+        )
+    if success:
+        success = hold_command(
+            env,
+            tilt_position,
+            config.pour_hold_duration,
+            diagnostics,
+            viewer,
+            realtime,
+            collision_context=collision_context,
+        )
+    return _placement_result(env, config, diagnostics, target_center, success_override=success)
+
+
 def warm_apriltag_pose_cache(
     env: SimEnv,
     config: PickupConfig,
@@ -1572,15 +1668,14 @@ def execute_pick_place_stack_sequence(
     if not second_pickup.success:
         return CupStackSequenceResult(first_pickup, first_place, second_pickup, None)
 
-    stack_target_center = _stack_target_center(env, config, first_diagnostics)
-    stack_place = execute_place(
+    stack_place = execute_pour(
         env,
         config,
         second_diagnostics,
         second_pickup,
-        stack_target_center,
+        first_diagnostics,
+        first_cup,
         second_cup,
-        allowed_support_body_names=(first_cup.body_name,),
         viewer=viewer,
         realtime=realtime,
     )
@@ -1646,7 +1741,7 @@ def print_sequence_result(result: CupStackSequenceResult) -> None:
         print("Pickup result (second cup): SKIPPED")
     else:
         print_result(result.second_pickup)
-    print_placement_result("Place second cup on first cup", result.stack_place)
+    print_placement_result("Pour second cup into first cup", result.stack_place)
 
 
 def parse_friction(values: list[float]) -> tuple[float, float, float]:
@@ -1753,7 +1848,7 @@ def parse_args() -> argparse.Namespace:
         "--sequence",
         choices=("pickup", "place-stack"),
         default="place-stack",
-        help="Run the original single pickup or the pick/place/stack sequence.",
+        help="Run the original single pickup or the pick/place/pour sequence.",
     )
     parser.add_argument("--sweep", action="store_true", help="Run a headless jaw-friction/cup-mass sweep.")
     parser.add_argument(

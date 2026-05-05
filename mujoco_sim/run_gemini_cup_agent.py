@@ -16,6 +16,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from mujoco_sim.gemini_cup_agent import (
     DEFAULT_AGENT_CAMERAS,
+    DEFAULT_GEMINI_AGENT_MODE,
     DEFAULT_GEMINI_MODEL,
     DEFAULT_GEMINI_TEMPERATURE,
     DEFAULT_GEMINI_THINKING_BUDGET,
@@ -23,9 +24,11 @@ from mujoco_sim.gemini_cup_agent import (
     DEFAULT_MAX_AGENT_STEPS,
     DEFAULT_MAX_PLAN_ACTIONS,
     DEFAULT_MOVE_DURATION,
+    DEFAULT_TASK_SPEC,
+    GEMINI_TASK_SPECS,
+    GeminiTaskSpec,
     build_observation,
     create_gemini_context,
-    evaluate_cup_stack_success,
     run_gemini_steps,
     write_gemini_json,
 )
@@ -78,6 +81,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scene", type=Path, default=PickupConfig.scene_path, help="MJCF cup scene to load.")
     parser.add_argument("--model", default=DEFAULT_GEMINI_MODEL, help="Gemini model name for the planner.")
     parser.add_argument(
+        "--agent-mode",
+        choices=("tools", "json"),
+        default=DEFAULT_GEMINI_AGENT_MODE,
+        help="Use Gemini function calling tools by default, or the legacy structured JSON planner.",
+    )
+    parser.add_argument(
+        "--task",
+        choices=tuple(GEMINI_TASK_SPECS),
+        default=DEFAULT_TASK_SPEC.name,
+        help="Task policy/prompt spec to use.",
+    )
+    parser.add_argument(
+        "--task-instruction",
+        help="Override attempt guidance for --task generic, e.g. 'move above tag 0 then finish'.",
+    )
+    parser.add_argument(
         "--max-agent-steps",
         type=int,
         default=DEFAULT_MAX_AGENT_STEPS,
@@ -104,6 +123,7 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_GEMINI_THINKING_BUDGET,
         help="Gemini thinking budget. Use 'none' to omit the setting.",
     )
+    parser.add_argument("--api-retries", type=int, default=2, help="Retries for retryable Gemini API errors.")
     parser.add_argument("--move-duration", type=float, default=DEFAULT_MOVE_DURATION, help="Default arm move duration.")
     parser.add_argument(
         "--gripper-duration",
@@ -141,7 +161,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--improve-headless",
         action="store_true",
-        help="Run bounded headless attempts until pick-and-place succeeds or attempts are exhausted.",
+        help="Run bounded headless attempts until the selected task succeeds or attempts are exhausted.",
     )
     parser.add_argument(
         "--max-attempts",
@@ -189,25 +209,20 @@ def create_run_dir(args: argparse.Namespace) -> Path:
     return run_dir
 
 
-def guidance_for_attempt(previous_evaluation: dict[str, Any] | None) -> str:
-    base = (
-        "Follow the deterministic cup stacking policy unless recovery is needed: "
-        "move_arm(apriltag_id=6,target='approach'), "
-        "move_arm(apriltag_id=6,target='grasp'), close_gripper(), "
-        "move_arm(apriltag_id=6,target='lift'), move_arm(apriltag_id=0,target='place_above'), "
-        "move_arm(apriltag_id=0,target='place'), open_gripper(), return_to_origin(), "
-        "move_arm(apriltag_id=1,target='approach'), move_arm(apriltag_id=1,target='grasp'), "
-        "close_gripper(), move_arm(apriltag_id=1,target='lift'), "
-        "move_arm(apriltag_id=6,target='place_above'), move_arm(apriltag_id=6,target='place'), "
-        "open_gripper(). "
-        "Use raw XYZ only for recovery. Return a complete validated action plan."
-    )
-    if previous_evaluation is None:
-        return base
-    reasons = "; ".join(previous_evaluation.get("failure_reasons", []))
-    if not reasons:
-        return base
-    return base + " Previous attempt failed because: " + reasons
+def task_spec_for_args(args: argparse.Namespace) -> GeminiTaskSpec:
+    return GEMINI_TASK_SPECS[args.task]
+
+
+def guidance_for_attempt(
+    task_spec: GeminiTaskSpec,
+    previous_evaluation: dict[str, Any] | None,
+    *,
+    task_instruction: str | None = None,
+) -> str:
+    base = task_spec.guidance(previous_evaluation)
+    if task_instruction:
+        return f"User task instruction: {task_instruction} {base}"
+    return base
 
 
 def create_context(
@@ -234,6 +249,8 @@ def write_attempt_summary(
     attempt_dir: Path,
     *,
     attempt_index: int,
+    task_name: str,
+    agent_mode: str,
     evaluation: dict[str, Any],
     step_count: int,
     guidance: str | None,
@@ -241,6 +258,8 @@ def write_attempt_summary(
 ) -> dict[str, Any]:
     summary = {
         "attempt_index": attempt_index,
+        "task": task_name,
+        "agent_mode": agent_mode,
         "success": evaluation["success"],
         "plan_only": plan_only,
         "step_count": step_count,
@@ -255,6 +274,8 @@ def print_attempt_summary(summary: dict[str, Any], attempt_dir: Path) -> None:
     evaluation = summary["evaluation"]
     print("\n=== Gemini attempt summary ===")
     print(f"attempt: {summary['attempt_index']}")
+    print(f"task: {summary['task']}")
+    print(f"agent_mode: {summary['agent_mode']}")
     print(f"success: {summary['success']}")
     print(f"plan_only: {summary['plan_only']}")
     print(f"steps: {summary['step_count']}")
@@ -289,7 +310,13 @@ def run_dry_observation(args: argparse.Namespace, context, camera_names: tuple[s
 def run_headless(args: argparse.Namespace, camera_names: tuple[str, ...]) -> None:
     run_dir = create_run_dir(args)
     attempt_dir = run_dir / "attempt_01"
-    context = create_context(args, camera_names, realtime=False, attempt_guidance=guidance_for_attempt(None))
+    task_spec = task_spec_for_args(args)
+    context = create_context(
+        args,
+        camera_names,
+        realtime=False,
+        attempt_guidance=guidance_for_attempt(task_spec, None, task_instruction=args.task_instruction),
+    )
     if args.dry_run:
         run_dry_observation(args, context, camera_names, attempt_dir)
         return
@@ -306,11 +333,16 @@ def run_headless(args: argparse.Namespace, camera_names: tuple[str, ...]) -> Non
         temperature=args.temperature,
         thinking_budget=args.thinking_budget,
         reference_plan=args.reference_plan,
+        task_spec=task_spec,
+        agent_mode=args.agent_mode,
+        api_retries=args.api_retries,
     )
-    evaluation = evaluate_cup_stack_success(context)
+    evaluation = task_spec.evaluator(context)
     summary = write_attempt_summary(
         attempt_dir,
         attempt_index=1,
+        task_name=task_spec.name,
+        agent_mode=args.agent_mode,
         evaluation=evaluation,
         step_count=len(step_results),
         guidance=context.attempt_guidance,
@@ -323,10 +355,11 @@ def run_headless_improvement(args: argparse.Namespace, camera_names: tuple[str, 
     run_dir = create_run_dir(args)
     previous_evaluation: dict[str, Any] | None = None
     summaries: list[dict[str, Any]] = []
+    task_spec = task_spec_for_args(args)
     for attempt_index in range(1, args.max_attempts + 1):
         print(f"\n### Gemini headless improvement attempt {attempt_index}/{args.max_attempts} ###")
         attempt_dir = run_dir / f"attempt_{attempt_index:02d}"
-        guidance = guidance_for_attempt(previous_evaluation)
+        guidance = guidance_for_attempt(task_spec, previous_evaluation, task_instruction=args.task_instruction)
         context = create_context(args, camera_names, realtime=False, attempt_guidance=guidance)
         step_results = run_gemini_steps(
             context,
@@ -340,11 +373,16 @@ def run_headless_improvement(args: argparse.Namespace, camera_names: tuple[str, 
             temperature=args.temperature,
             thinking_budget=args.thinking_budget,
             reference_plan=args.reference_plan,
+            task_spec=task_spec,
+            agent_mode=args.agent_mode,
+            api_retries=args.api_retries,
         )
-        evaluation = evaluate_cup_stack_success(context)
+        evaluation = task_spec.evaluator(context)
         summary = write_attempt_summary(
             attempt_dir,
             attempt_index=attempt_index,
+            task_name=task_spec.name,
+            agent_mode=args.agent_mode,
             evaluation=evaluation,
             step_count=len(step_results),
             guidance=guidance,
@@ -359,6 +397,8 @@ def run_headless_improvement(args: argparse.Namespace, camera_names: tuple[str, 
     run_summary = {
         "success": any(summary["success"] for summary in summaries),
         "plan_only": args.plan_only,
+        "task": task_spec.name,
+        "agent_mode": args.agent_mode,
         "attempts": summaries,
     }
     write_gemini_json(run_dir / "run_summary.json", run_summary)
@@ -368,7 +408,13 @@ def run_headless_improvement(args: argparse.Namespace, camera_names: tuple[str, 
 def run_with_viewer(args: argparse.Namespace, camera_names: tuple[str, ...]) -> None:
     run_dir = create_run_dir(args)
     attempt_dir = run_dir / "attempt_01"
-    context = create_context(args, camera_names, realtime=True, attempt_guidance=guidance_for_attempt(None))
+    task_spec = task_spec_for_args(args)
+    context = create_context(
+        args,
+        camera_names,
+        realtime=True,
+        attempt_guidance=guidance_for_attempt(task_spec, None, task_instruction=args.task_instruction),
+    )
     with mujoco.viewer.launch_passive(context.env.model, context.env.data) as viewer:
         context.viewer = viewer
         context.env.viewer = viewer
@@ -388,11 +434,16 @@ def run_with_viewer(args: argparse.Namespace, camera_names: tuple[str, ...]) -> 
             temperature=args.temperature,
             thinking_budget=args.thinking_budget,
             reference_plan=args.reference_plan,
+            task_spec=task_spec,
+            agent_mode=args.agent_mode,
+            api_retries=args.api_retries,
         )
-        evaluation = evaluate_cup_stack_success(context)
+        evaluation = task_spec.evaluator(context)
         summary = write_attempt_summary(
             attempt_dir,
             attempt_index=1,
+            task_name=task_spec.name,
+            agent_mode=args.agent_mode,
             evaluation=evaluation,
             step_count=len(step_results),
             guidance=context.attempt_guidance,
@@ -406,6 +457,10 @@ def main() -> None:
     args = parse_args()
     if args.max_plan_actions < 1:
         raise SystemExit("--max-plan-actions must be at least 1.")
+    if args.api_retries < 0:
+        raise SystemExit("--api-retries must be non-negative.")
+    if args.reference_plan and GEMINI_TASK_SPECS[args.task].reference_plan is None:
+        raise SystemExit(f"--reference-plan is not available for task {args.task!r}.")
     camera_names = parse_camera_names(args.cameras)
     if args.improve_headless:
         if not args.headless:

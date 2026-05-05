@@ -1,0 +1,243 @@
+{
+  "apriltag_estimates": {
+    "detected_tags": {
+      "0": [
+        {
+          "camera_name": "wrist_cam",
+          "camera_position_m": [
+            0.08464,
+            -0.06736,
+            0.49036
+          ],
+          "pose_error": 0.0,
+          "tag_id": 0,
+          "world_position_m": [
+            0.52511,
+            -0.07728,
+            -0.0874
+          ],
+          "world_rotation_matrix": [
+            0.9122,
+            0.09784,
+            0.3979,
+            0.06535,
+            -0.99338,
+            0.09443,
+            0.4045,
+            -0.06014,
+            -0.91256
+          ]
+        }
+      ],
+      "1": [
+        {
+          "camera_name": "wrist_cam",
+          "camera_position_m": [
+            0.12822,
+            0.03585,
+            0.25791
+          ],
+          "pose_error": 0.0,
+          "tag_id": 1,
+          "world_position_m": [
+            0.30455,
+            -0.12268,
+            0.03858
+          ],
+          "world_rotation_matrix": [
+            0.10552,
+            0.09725,
+            0.98965,
+            -0.13125,
+            -0.98514,
+            0.11081,
+            0.98572,
+            -0.14159,
+            -0.09119
+          ]
+        },
+        {
+          "camera_name": "table_observer",
+          "camera_position_m": [
+            0.0781,
+            0.05977,
+            0.25191
+          ],
+          "pose_error": 0.0,
+          "tag_id": 1,
+          "world_position_m": [
+            0.28538,
+            -0.1399,
+            0.07358
+          ],
+          "world_rotation_matrix": [
+            -0.00141,
+            -0.00229,
+            1.0,
+            -0.0046,
+            -0.99999,
+            -0.0023,
+            0.99999,
+            -0.00461,
+            0.0014
+          ]
+        }
+      ],
+      "6": [
+        {
+          "camera_name": "wrist_cam",
+          "camera_position_m": [
+            0.0044,
+            0.04813,
+            0.29648
+          ],
+          "pose_error": 0.0,
+          "tag_id": 6,
+          "world_position_m": [
+            0.3194,
+            0.00251,
+            0.00576
+          ],
+          "world_rotation_matrix": [
+            0.17874,
+            0.02497,
+            0.98358,
+            -0.01068,
+            -0.99957,
+            0.02732,
+            0.98384,
+            -0.01538,
+            -0.17839
+          ]
+        },
+        {
+          "camera_name": "table_observer",
+          "camera_position_m": [
+            -0.00669,
+            0.03932,
+            0.36653
+          ],
+          "pose_error": 0.0,
+          "tag_id": 6,
+          "world_position_m": [
+            0.28871,
+            0.00408,
+            0.07195
+          ],
+          "world_rotation_matrix": [
+            0.01275,
+            -0.01601,
+            0.99979,
+            -0.00043,
+            -0.99987,
+            -0.016,
+            0.99992,
+            -0.00022,
+            -0.01275
+          ]
+        }
+      ]
+    },
+    "errors": []
+  },
+  "camera_frame_paths": {
+    "cup_observer": "/Users/cadenli/Documents/launchpad/whisk/agent-1/gemini_cup_agent_runs/20260505_144741/attempt_01/frames/step_000_cup_observer.png",
+    "table_observer": "/Users/cadenli/Documents/launchpad/whisk/agent-1/gemini_cup_agent_runs/20260505_144741/attempt_01/frames/step_000_table_observer.png",
+    "wrist_cam": "/Users/cadenli/Documents/launchpad/whisk/agent-1/gemini_cup_agent_runs/20260505_144741/attempt_01/frames/step_000_wrist_cam.png"
+  },
+  "cameras": [
+    {
+      "available": true,
+      "camera_id": 2,
+      "image_data_url_bytes": 52610,
+      "name": "wrist_cam",
+      "world_position_m": [
+        0.18481,
+        -0.00285,
+        0.27426
+      ]
+    },
+    {
+      "available": true,
+      "camera_id": 1,
+      "image_data_url_bytes": 62250,
+      "name": "table_observer",
+      "world_position_m": [
+        0.08,
+        -0.28,
+        0.18
+      ]
+    },
+    {
+      "available": true,
+      "camera_id": 0,
+      "image_data_url_bytes": 41594,
+      "name": "cup_observer",
+      "world_position_m": [
+        0.25,
+        -0.35,
+        0.35
+      ]
+    }
+  ],
+  "cups": [
+    {
+      "body_id": 11,
+      "label": "first cup",
+      "tag_id": 6,
+      "world_position_m": [
+        0.32,
+        0.0,
+        0.07357
+      ]
+    },
+    {
+      "body_id": 13,
+      "label": "second cup",
+      "tag_id": 1,
+      "world_position_m": [
+        0.32,
+        -0.14,
+        0.07357
+      ]
+    }
+  ],
+  "current_joints": {
+    "elbow_flex": 35.8,
+    "gripper": 55.6,
+    "shoulder_lift": -76.2,
+    "shoulder_pan": 0.0,
+    "wrist_flex": 61.9,
+    "wrist_roll": -90.0
+  },
+  "scene_path": "/Users/cadenli/Documents/launchpad/whisk/agent-1/simulation_code/model/scene_cup.xml",
+  "step_index": 0,
+  "table_tags": [
+    {
+      "body": {
+        "available": true,
+        "body_id": 10,
+        "name": "place_tag36h11_00000",
+        "world_position_m": [
+          0.44,
+          -0.08,
+          0.002
+        ],
+        "world_quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "body_name": "place_tag36h11_00000",
+      "configured_position_m": [
+        0.44,
+        -0.08,
+        0.002
+      ],
+      "label": "placement tag",
+      "tag_id": 0
+    }
+  ]
+}

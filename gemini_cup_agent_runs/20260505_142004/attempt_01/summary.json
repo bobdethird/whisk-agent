@@ -1,0 +1,211 @@
+{
+  "attempt_index": 1,
+  "evaluation": {
+    "failure_reasons": [],
+    "first_contact_diagnostics": {
+      "both_jaw_contact_steps": 717,
+      "contact_pairs_seen": [
+        {
+          "cup_geom": "cup_collision_00",
+          "other_geom": "work_table_top"
+        },
+        {
+          "cup_geom": "cup_collision_02",
+          "other_geom": "fixed_jaw_box3"
+        },
+        {
+          "cup_geom": "cup_collision_02",
+          "other_geom": "fixed_jaw_box4"
+        },
+        {
+          "cup_geom": "cup_collision_02",
+          "other_geom": "fixed_jaw_grip_pad"
+        },
+        {
+          "cup_geom": "cup_collision_02",
+          "other_geom": "fixed_jaw_sph_tip1"
+        },
+        {
+          "cup_geom": "cup_collision_02",
+          "other_geom": "fixed_jaw_sph_tip2"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "other_geom": "fixed_jaw_box4"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "other_geom": "fixed_jaw_grip_pad"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "other_geom": "fixed_jaw_sph_tip1"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "other_geom": "fixed_jaw_sph_tip2"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "other_geom": "fixed_jaw_sph_tip3"
+        },
+        {
+          "cup_geom": "cup_collision_04",
+          "other_geom": "camera_box2"
+        },
+        {
+          "cup_geom": "cup_collision_04",
+          "other_geom": "fixed_jaw_box1"
+        },
+        {
+          "cup_geom": "cup_collision_07",
+          "other_geom": "moving_jaw_grip_pad"
+        },
+        {
+          "cup_geom": "cup_collision_08",
+          "other_geom": "camera_box2"
+        },
+        {
+          "cup_geom": "cup_collision_08",
+          "other_geom": "moving_jaw_grip_pad"
+        }
+      ],
+      "cup_contact_steps": 1899,
+      "cup_label": "first cup",
+      "current_gripper_cup_contacts": [],
+      "fixed_contact_steps": 720,
+      "max_contacts": 13,
+      "max_cup_z_m": 0.17801,
+      "moving_contact_steps": 725,
+      "steps": 1900
+    },
+    "first_cup_label": "first cup",
+    "first_final_center_m": [
+      0.4259,
+      -0.08147,
+      0.07338
+    ],
+    "first_lift_delta_m": 0.104446,
+    "first_max_cup_z_m": 0.17801,
+    "first_target_center_m": [
+      0.44,
+      -0.08,
+      0.07357
+    ],
+    "first_xy_error_m": 0.014179,
+    "first_z_error_m": 0.000189,
+    "gripper_open": true,
+    "gripper_position": 50.00005,
+    "held_cup_label": null,
+    "lift_delta_m": 0.104446,
+    "released": true,
+    "second_contact_diagnostics": {
+      "both_jaw_contact_steps": 604,
+      "contact_pairs_seen": [
+        {
+          "cup_geom": "second_cup_collision_00",
+          "other_geom": "cup_collision_01"
+        },
+        {
+          "cup_geom": "second_cup_collision_00",
+          "other_geom": "cup_collision_05"
+        },
+        {
+          "cup_geom": "second_cup_collision_00",
+          "other_geom": "work_table_top"
+        },
+        {
+          "cup_geom": "second_cup_collision_02",
+          "other_geom": "fixed_jaw_box3"
+        },
+        {
+          "cup_geom": "second_cup_collision_02",
+          "other_geom": "fixed_jaw_box4"
+        },
+        {
+          "cup_geom": "second_cup_collision_02",
+          "other_geom": "fixed_jaw_grip_pad"
+        },
+        {
+          "cup_geom": "second_cup_collision_02",
+          "other_geom": "fixed_jaw_sph_tip1"
+        },
+        {
+          "cup_geom": "second_cup_collision_02",
+          "other_geom": "fixed_jaw_sph_tip2"
+        },
+        {
+          "cup_geom": "second_cup_collision_02",
+          "other_geom": "fixed_jaw_sph_tip3"
+        },
+        {
+          "cup_geom": "second_cup_collision_04",
+          "other_geom": "camera_box2"
+        },
+        {
+          "cup_geom": "second_cup_collision_07",
+          "other_geom": "moving_jaw_box2"
+        },
+        {
+          "cup_geom": "second_cup_collision_07",
+          "other_geom": "moving_jaw_grip_pad"
+        },
+        {
+          "cup_geom": "second_cup_collision_07",
+          "other_geom": "moving_jaw_sph_tip2"
+        },
+        {
+          "cup_geom": "second_cup_collision_07",
+          "other_geom": "moving_jaw_sph_tip3"
+        },
+        {
+          "cup_geom": "second_cup_collision_08",
+          "other_geom": "moving_jaw_box2"
+        },
+        {
+          "cup_geom": "second_cup_collision_08",
+          "other_geom": "moving_jaw_grip_pad"
+        },
+        {
+          "cup_geom": "second_cup_collision_08",
+          "other_geom": "moving_jaw_sph_tip2"
+        },
+        {
+          "cup_geom": "second_cup_collision_08",
+          "other_geom": "moving_jaw_sph_tip3"
+        }
+      ],
+      "cup_contact_steps": 1500,
+      "cup_label": "second cup",
+      "current_gripper_cup_contacts": [],
+      "fixed_contact_steps": 604,
+      "max_contacts": 15,
+      "max_cup_z_m": 0.3058,
+      "moving_contact_steps": 618,
+      "steps": 1500
+    },
+    "second_cup_label": "second cup",
+    "second_final_center_m": [
+      0.4175,
+      -0.08153,
+      0.21505
+    ],
+    "second_lift_delta_m": 0.232237,
+    "second_max_cup_z_m": 0.3058,
+    "second_target_center_m": [
+      0.4259,
+      -0.08147,
+      0.22051
+    ],
+    "stack_xy_error_m": 0.008397,
+    "stack_z_error_m": 0.005458,
+    "success": true,
+    "task": "cup_stack",
+    "xy_error_m": 0.014179,
+    "z_error_m": 0.005458
+  },
+  "guidance": "Follow the deterministic cup stacking policy one closed-loop phase at a time unless recovery is needed: pick/lift first cup; after fresh observation, place/release first cup on tag 0 and return to origin; after fresh observation, pick/lift second cup; after fresh observation, place the second cup on tag 6 with tool_point='claw_center' and open_gripper(duration=2.0). Use raw XYZ only for recovery. Return only the next phase, not the full task.",
+  "plan_only": false,
+  "step_count": 4,
+  "success": true
+}

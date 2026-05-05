@@ -41,8 +41,12 @@ from mujoco_sim.run_cup_pickup import (
     target_points_from_cup_center,
 )
 from pose_estimation import TagPoseEstimate, render_camera
-from sim_env import SimEnv, create_env
-from so101_kinematics import FIXED_JAW_TOOL_POINT, ToolPointName, gripperframe_pose_to_tool_target_pose
+from sim_env import HORIZONTAL_WRIST_ROLL_DEGREES, SimEnv, create_env
+from so101_kinematics import (
+    FIXED_JAW_TOOL_POINT,
+    ToolPointName,
+    gripperframe_pose_to_tool_target_pose,
+)
 from so101_mujoco_utils import JOINT_ORDER, convert_to_dictionary
 
 
@@ -68,6 +72,7 @@ class CupAgentContext:
     held_grasp_offset: np.ndarray | None = None
     last_tool_result: dict[str, Any] | None = None
     attempt_guidance: str | None = None
+    completed_pour: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -247,6 +252,7 @@ def _semantic_target_for_apriltag(
     context: CupAgentContext,
     apriltag_id: int,
     target: str,
+    tool_point: ToolPointName = FIXED_JAW_TOOL_POINT,
 ) -> tuple[np.ndarray, CupSpec, ContactDiagnostics, str, tuple[str, ...]]:
     if target not in MOVE_ARM_TARGETS or target == "custom":
         raise ValueError(f"Semantic move target must be one of {MOVE_ARM_TARGETS[1:]}, got {target!r}.")
@@ -272,9 +278,7 @@ def _semantic_target_for_apriltag(
             if held_cup.label == cup.label:
                 raise ValueError("Cannot stack a held cup onto itself.")
             target_center = cup_center + np.array([0.0, 0.0, 2.0 * context.config.cup_half_height], dtype=float)
-            release_xyz = target_center
-            if context.held_grasp_offset is not None:
-                release_xyz = target_center + context.held_grasp_offset
+            release_xyz = target_center + _held_tool_offset(context, held_cup, diagnostics, tool_point)
             if target == "place_above":
                 target_xyz = release_xyz + np.array([0.0, 0.0, context.config.place_approach_height])
             else:
@@ -285,9 +289,12 @@ def _semantic_target_for_apriltag(
         raise ValueError(f"AprilTag ID {apriltag_id} is not a configured cup or placement tag.")
     target_center, source = _place_center_for_tool(context)
     active_cup, diagnostics = _active_cup_and_diagnostics(context)
-    release_xyz = target_center
-    if context.held_grasp_offset is not None:
-        release_xyz = target_center + context.held_grasp_offset
+    place_offset = (
+        context.held_grasp_offset.copy()
+        if context.held_grasp_offset is not None
+        else _held_tool_offset(context, active_cup, diagnostics, tool_point)
+    )
+    release_xyz = target_center + place_offset
     if target == "place_above":
         target_xyz = release_xyz + np.array([0.0, 0.0, context.config.place_approach_height])
     elif target == "place":
@@ -441,6 +448,7 @@ def build_observation(
         "camera_frame_paths": camera_frame_paths,
         "last_tool_result": context.last_tool_result,
         "attempt_guidance": context.attempt_guidance,
+        "task_state": _cup_pour_task_state(context),
     }
 
     if include_apriltag_estimates:
@@ -489,6 +497,26 @@ def _active_cup_and_diagnostics(context: CupAgentContext) -> tuple[CupSpec, Cont
     return cup, context.diagnostics_by_label[cup.label]
 
 
+def _current_tool_target_xyz(context: CupAgentContext, tool_point: ToolPointName) -> np.ndarray:
+    gripperframe_pose = context.env.kinematics.forward_kinematics(context.env.current_position, frame="mujoco")
+    tool_pose = gripperframe_pose_to_tool_target_pose(gripperframe_pose, tool_point)
+    return tool_pose[:3, 3].copy()
+
+
+def _held_tool_offset(
+    context: CupAgentContext,
+    held_cup: CupSpec,
+    diagnostics: ContactDiagnostics,
+    tool_point: ToolPointName,
+) -> np.ndarray:
+    if context.held_cup_label != held_cup.label:
+        if context.held_grasp_offset is not None:
+            return context.held_grasp_offset.copy()
+        return np.zeros(3, dtype=float)
+    held_center = context.env.data.xpos[diagnostics.cup_body_id].copy()
+    return _current_tool_target_xyz(context, tool_point) - held_center
+
+
 def _update_held_cup_after_close(context: CupAgentContext) -> None:
     for label, diagnostics in context.diagnostics_by_label.items():
         if current_gripper_cup_contacts(context.env, diagnostics):
@@ -528,28 +556,155 @@ def _retreat_after_release(context: CupAgentContext, cup: CupSpec, diagnostics: 
 
 
 def _current_fixed_jaw_target_xyz(context: CupAgentContext) -> np.ndarray:
-    gripperframe_pose = context.env.kinematics.forward_kinematics(context.env.current_position, frame="mujoco")
-    tool_pose = gripperframe_pose_to_tool_target_pose(gripperframe_pose, FIXED_JAW_TOOL_POINT)
-    return tool_pose[:3, 3].copy()
+    return _current_tool_target_xyz(context, FIXED_JAW_TOOL_POINT)
 
 
-def _stabilize_released_cup(context: CupAgentContext, cup: CupSpec, release_center: np.ndarray) -> None:
-    joint_id = mujoco.mj_name2id(context.env.model, mujoco.mjtObj.mjOBJ_JOINT, cup.freejoint_name)
-    if joint_id < 0:
-        raise ValueError(f"Could not find freejoint {cup.freejoint_name!r}.")
-    qpos_address = int(context.env.model.jnt_qposadr[joint_id])
-    qvel_address = int(context.env.model.jnt_dofadr[joint_id])
-    context.env.data.qpos[qpos_address : qpos_address + 7] = [
-        float(release_center[0]),
-        float(release_center[1]),
-        float(release_center[2]),
-        1.0,
-        0.0,
-        0.0,
-        0.0,
-    ]
-    context.env.data.qvel[qvel_address : qvel_address + 6] = 0.0
-    mujoco.mj_forward(context.env.model, context.env.data)
+def _last_move_was_stack_place(context: CupAgentContext) -> bool:
+    result = context.last_tool_result or {}
+    return (
+        result.get("action") == "move_arm"
+        and result.get("target") == "place"
+        and str(result.get("target_source", "")).startswith("simulator_stack_on_")
+    )
+
+
+def _joint_range_degrees(context: CupAgentContext, joint_name: str) -> tuple[float, float]:
+    joint_id = _named_id(context.env.model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
+    if joint_id is None:
+        raise ValueError(f"Could not find MuJoCo joint named {joint_name!r}.")
+    lower, upper = context.env.model.jnt_range[joint_id]
+    return float(np.rad2deg(lower)), float(np.rad2deg(upper))
+
+
+def _clamp_joint_degrees(context: CupAgentContext, joint_name: str, value: float) -> float:
+    lower, upper = _joint_range_degrees(context, joint_name)
+    return float(np.clip(value, lower, upper))
+
+
+def _pour_tool_target_xyz(
+    context: CupAgentContext,
+    receiver_cup: CupSpec,
+    held_cup: CupSpec,
+    held_diagnostics: ContactDiagnostics,
+    tool_point: ToolPointName,
+) -> tuple[np.ndarray, np.ndarray]:
+    receiver_center, _source = _cup_center_for_tool(context, receiver_cup)
+    held_center = context.env.data.xpos[held_diagnostics.cup_body_id].copy()
+    offset_xy = held_center[:2] - receiver_center[:2]
+    offset_norm = float(np.linalg.norm(offset_xy))
+    if offset_norm <= 1e-6:
+        offset_xy = receiver_center[:2].copy()
+        offset_norm = float(np.linalg.norm(offset_xy))
+    pour_direction = offset_xy / offset_norm if offset_norm > 1e-6 else np.array([1.0, 0.0], dtype=float)
+    pour_center = receiver_center.copy()
+    # Wrist roll tilts the held cup around its center, so keep the center
+    # half a cup-height back from the receiver. After the tilt, the rim/top
+    # sweeps over the receiver opening instead of the cup center hovering there.
+    rim_alignment_offset = context.config.cup_half_height + context.config.pour_lateral_offset
+    pour_center[:2] = receiver_center[:2] + pour_direction * rim_alignment_offset
+    pour_center[2] = receiver_center[2] + context.config.cup_half_height + context.config.pour_height
+    return pour_center + _held_tool_offset(context, held_cup, held_diagnostics, tool_point), receiver_center
+
+
+def execute_pour_into(
+    context: CupAgentContext,
+    apriltag_id: int,
+    *,
+    duration: float | None = None,
+    tilt_degrees: float | None = None,
+) -> dict[str, Any]:
+    """Move the held cup above a receiver cup and roll the wrist for a pour gesture."""
+    if context.held_cup_label is None:
+        context.last_tool_result = {
+            "success": False,
+            "action": "pour_into",
+            "error": "Cannot pour because no cup is currently held.",
+        }
+        return dict(context.last_tool_result)
+
+    receiver_cup = _cup_for_apriltag_id(context.config, apriltag_id)
+    if receiver_cup is None:
+        context.last_tool_result = {
+            "success": False,
+            "action": "pour_into",
+            "error": f"AprilTag {apriltag_id} is not a cup tag.",
+        }
+        return dict(context.last_tool_result)
+
+    held_cup, held_diagnostics = _active_cup_and_diagnostics(context)
+    if held_cup.label == receiver_cup.label:
+        context.last_tool_result = {
+            "success": False,
+            "action": "pour_into",
+            "error": "Cannot pour a held cup into itself.",
+        }
+        return dict(context.last_tool_result)
+
+    try:
+        tool_point = FIXED_JAW_TOOL_POINT
+        pour_xyz, receiver_center = _pour_tool_target_xyz(context, receiver_cup, held_cup, held_diagnostics, tool_point)
+        gripper_position = float(context.env.current_position.get("gripper", CLOSED_GRIPPER))
+        approach_position = solve_target(context.env, pour_xyz, gripper_position, tool_point)
+        collision_context = planner_context_for_cup(
+            held_diagnostics,
+            held_cup,
+            attach_cup=True,
+            allow_gripper_cup_contact=True,
+            allowed_support_body_names=(receiver_cup.body_name,),
+        )
+        success = command_motion(
+            context.env,
+            approach_position,
+            context.move_duration if duration is None else float(duration),
+            held_diagnostics,
+            viewer=context.viewer,
+            realtime=context.realtime,
+            planner_config=context.config.motion_planner,
+            collision_context=collision_context,
+        )
+        tilt_position = dict(context.env.current_position)
+        if success:
+            requested_tilt = context.config.pour_tilt_degrees if tilt_degrees is None else float(tilt_degrees)
+            tilt_position["wrist_roll"] = _clamp_joint_degrees(
+                context,
+                "wrist_roll",
+                HORIZONTAL_WRIST_ROLL_DEGREES + requested_tilt,
+            )
+            success = command_motion(
+                context.env,
+                tilt_position,
+                context.config.pour_duration,
+                held_diagnostics,
+                viewer=context.viewer,
+                realtime=context.realtime,
+                collision_context=collision_context,
+            )
+        if success:
+            success = hold_command(
+                context.env,
+                tilt_position,
+                context.config.pour_hold_duration,
+                held_diagnostics,
+                viewer=context.viewer,
+                realtime=context.realtime,
+                collision_context=collision_context,
+            )
+
+        pour_record = {
+            "source_cup_label": held_cup.label,
+            "receiver_cup_label": receiver_cup.label,
+            "receiver_apriltag_id": apriltag_id,
+            "pour_xyz_m": _round_list(pour_xyz),
+            "receiver_center_m": _round_list(receiver_center),
+            "tilt_degrees": _round_float(tilt_position["wrist_roll"] - HORIZONTAL_WRIST_ROLL_DEGREES),
+        }
+        if success:
+            context.completed_pour = pour_record
+        context.last_tool_result = {"success": success, "action": "pour_into", **pour_record}
+        return dict(context.last_tool_result)
+    except Exception as exc:
+        context.last_tool_result = {"success": False, "action": "pour_into", "error": str(exc)}
+        return dict(context.last_tool_result)
 
 
 def parse_tool_output(output: str) -> dict[str, Any] | None:
@@ -707,12 +862,180 @@ def evaluate_cup_stack_success(context: CupAgentContext) -> dict[str, Any]:
     }
 
 
+def evaluate_cup_pour_success(context: CupAgentContext) -> dict[str, Any]:
+    first_cup = primary_cup_spec(context.config)
+    second_cup = second_cup_spec(context.config)
+    first_diagnostics = context.diagnostics_by_label[first_cup.label]
+    second_diagnostics = context.diagnostics_by_label[second_cup.label]
+
+    first_center = context.env.data.xpos[first_diagnostics.cup_body_id].copy()
+    second_center = context.env.data.xpos[second_diagnostics.cup_body_id].copy()
+    first_initial = np.array(first_cup.initial_position, dtype=float)
+    second_initial = np.array(second_cup.initial_position, dtype=float)
+    place_tag = np.array(context.config.place_tag_position, dtype=float)
+    first_target_center = np.array([place_tag[0], place_tag[1], context.config.cup_half_height], dtype=float)
+
+    first_xy_error = float(np.linalg.norm(first_center[:2] - first_target_center[:2]))
+    first_z_error = float(abs(first_center[2] - first_target_center[2]))
+    pour_xy_error = float(np.linalg.norm(second_center[:2] - first_center[:2]))
+    first_lift_delta = float(first_diagnostics.max_cup_z - first_initial[2])
+    second_lift_delta = float(second_diagnostics.max_cup_z - second_initial[2])
+
+    current_joints = convert_to_dictionary(context.env.data.qpos.copy())
+    gripper_open = bool(current_joints["gripper"] >= (OPEN_GRIPPER + CLOSED_GRIPPER) * 0.5)
+    released = bool(context.held_cup_label is None)
+    first_lifted = bool(first_lift_delta >= context.config.success_lift_delta)
+    second_lifted = bool(second_lift_delta >= context.config.success_lift_delta)
+    first_placed = bool(
+        first_xy_error <= context.config.place_success_xy_tolerance
+        and first_z_error <= context.config.place_success_z_tolerance
+    )
+    pour_record = context.completed_pour or {}
+    second_poured = bool(
+        pour_record.get("source_cup_label") == second_cup.label
+        and pour_record.get("receiver_cup_label") == first_cup.label
+    )
+    success = bool(first_lifted and first_placed and second_lifted and second_poured)
+
+    failure_reasons: list[str] = []
+    if not first_lifted:
+        failure_reasons.append(
+            f"first cup lift delta {first_lift_delta:.4f} m below threshold {context.config.success_lift_delta:.4f} m"
+        )
+    if not first_placed:
+        failure_reasons.append(
+            "first cup final pose outside placement tolerance "
+            f"(xy_error={first_xy_error:.4f} m, z_error={first_z_error:.4f} m)"
+        )
+    if not second_lifted:
+        failure_reasons.append(
+            f"second cup lift delta {second_lift_delta:.4f} m below threshold {context.config.success_lift_delta:.4f} m"
+        )
+    if not second_poured:
+        failure_reasons.append("second cup has not completed a pour gesture into the first cup")
+
+    return {
+        "success": success,
+        "failure_reasons": failure_reasons,
+        "task": "cup_pour",
+        "first_cup_label": first_cup.label,
+        "second_cup_label": second_cup.label,
+        "first_final_center_m": _round_list(first_center),
+        "first_target_center_m": _round_list(first_target_center),
+        "second_final_center_m": _round_list(second_center),
+        "first_xy_error_m": _round_float(first_xy_error, 6),
+        "first_z_error_m": _round_float(first_z_error, 6),
+        "pour_xy_error_m": _round_float(pour_xy_error, 6),
+        "first_lift_delta_m": _round_float(first_lift_delta, 6),
+        "second_lift_delta_m": _round_float(second_lift_delta, 6),
+        "lift_delta_m": _round_float(min(first_lift_delta, second_lift_delta), 6),
+        "xy_error_m": _round_float(max(first_xy_error, pour_xy_error), 6),
+        "z_error_m": _round_float(first_z_error, 6),
+        "first_max_cup_z_m": _round_float(first_diagnostics.max_cup_z),
+        "second_max_cup_z_m": _round_float(second_diagnostics.max_cup_z),
+        "gripper_position": _round_float(current_joints["gripper"]),
+        "gripper_open": gripper_open,
+        "released": released,
+        "held_cup_label": context.held_cup_label,
+        "completed_pour": pour_record or None,
+        "second_poured_into_first": second_poured,
+        "first_contact_diagnostics": _diagnostics_observation(context.env, first_diagnostics),
+        "second_contact_diagnostics": _diagnostics_observation(context.env, second_diagnostics),
+    }
+
+
+def _cup_pour_task_state(context: CupAgentContext) -> dict[str, Any]:
+    evaluation = evaluate_cup_pour_success(context)
+    config = context.config
+    first_placed = bool(
+        evaluation["first_xy_error_m"] <= config.place_success_xy_tolerance
+        and evaluation["first_z_error_m"] <= config.place_success_z_tolerance
+    )
+    second_poured = bool(evaluation["second_poured_into_first"])
+    if evaluation["success"]:
+        next_phase = "done"
+        allowed_next_cup_tag_id = None
+    elif context.held_cup_label == evaluation["first_cup_label"]:
+        next_phase = "place_first_cup_on_tag_0"
+        allowed_next_cup_tag_id = None
+    elif context.held_cup_label == evaluation["second_cup_label"]:
+        next_phase = "pour_second_cup_into_tag_6"
+        allowed_next_cup_tag_id = config.cup_tag_id
+    elif not first_placed:
+        next_phase = "pick_first_cup_tag_6"
+        allowed_next_cup_tag_id = config.cup_tag_id
+    elif not second_poured:
+        next_phase = "pick_second_cup_tag_1"
+        allowed_next_cup_tag_id = config.second_cup_tag_id
+    else:
+        next_phase = "done"
+        allowed_next_cup_tag_id = None
+
+    return {
+        "next_phase": next_phase,
+        "held_cup_label": context.held_cup_label,
+        "first_placed_on_tag_0": first_placed,
+        "second_poured_into_first": second_poured,
+        "allowed_next_cup_tag_id": allowed_next_cup_tag_id,
+        "first_cup_tag_id": config.cup_tag_id,
+        "second_cup_tag_id": config.second_cup_tag_id,
+        "place_tag_id": config.place_tag_id,
+        "pour_receiver_tag_id": config.cup_tag_id,
+        "pour_tilt_degrees": config.pour_tilt_degrees,
+    }
+
+
+def _cup_stack_task_state(context: CupAgentContext) -> dict[str, Any]:
+    evaluation = evaluate_cup_stack_success(context)
+    config = context.config
+    first_placed = bool(
+        evaluation["first_xy_error_m"] <= config.place_success_xy_tolerance
+        and evaluation["first_z_error_m"] <= config.place_success_z_tolerance
+    )
+    second_stacked = bool(
+        evaluation["stack_xy_error_m"] <= config.place_success_xy_tolerance
+        and evaluation["stack_z_error_m"] <= config.place_success_z_tolerance
+    )
+    if evaluation["success"]:
+        next_phase = "done"
+        allowed_next_cup_tag_id = None
+    elif context.held_cup_label == evaluation["first_cup_label"]:
+        next_phase = "place_first_cup_on_tag_0"
+        allowed_next_cup_tag_id = None
+    elif context.held_cup_label == evaluation["second_cup_label"]:
+        next_phase = "stack_second_cup_on_tag_6"
+        allowed_next_cup_tag_id = config.cup_tag_id
+    elif not first_placed:
+        next_phase = "pick_first_cup_tag_6"
+        allowed_next_cup_tag_id = config.cup_tag_id
+    elif not second_stacked:
+        next_phase = "pick_second_cup_tag_1"
+        allowed_next_cup_tag_id = config.second_cup_tag_id
+    else:
+        next_phase = "done"
+        allowed_next_cup_tag_id = None
+
+    return {
+        "next_phase": next_phase,
+        "held_cup_label": context.held_cup_label,
+        "first_placed_on_tag_0": first_placed,
+        "second_stacked_on_first": second_stacked,
+        "allowed_next_cup_tag_id": allowed_next_cup_tag_id,
+        "first_cup_tag_id": config.cup_tag_id,
+        "second_cup_tag_id": config.second_cup_tag_id,
+        "place_tag_id": config.place_tag_id,
+        "stack_place_tool_point": "claw_center",
+        "stack_open_duration_s": config.stack_release_open_duration,
+    }
+
+
 def _compact_observation_summary(observation: dict[str, Any]) -> dict[str, Any]:
     cups = observation["objects"]["cups"]
     return {
         "step_index": observation["step_index"],
         "joints": observation["current_joints"],
         "held_cup_label": observation["gripper"]["held_cup_label"],
+        "task_state": observation.get("task_state"),
         "cups": [
             {
                 "label": cup["label"],
@@ -825,6 +1148,7 @@ def create_cup_agent(model: str = DEFAULT_AGENT_MODEL) -> Any:
                     context,
                     apriltag_id,
                     target,
+                    tool_point,
                 )
             else:
                 if x is None or y is None or z is None:
@@ -881,15 +1205,18 @@ def create_cup_agent(model: str = DEFAULT_AGENT_MODEL) -> Any:
         target_position = dict(context.env.current_position)
         target_position["gripper"] = OPEN_GRIPPER
         was_holding = context.held_cup_label is not None
-        release_center = None
-        if was_holding and context.held_grasp_offset is not None:
-            release_center = _current_fixed_jaw_target_xyz(context) - context.held_grasp_offset
+        stack_release = _last_move_was_stack_place(context)
         cup, diagnostics = _active_cup_and_diagnostics(context)
         try:
+            release_duration = (
+                context.config.stack_release_open_duration
+                if duration is None and stack_release
+                else context.gripper_duration if duration is None else float(duration)
+            )
             success = command_motion(
                 context.env,
                 target_position,
-                context.gripper_duration if duration is None else float(duration),
+                release_duration,
                 diagnostics,
                 viewer=context.viewer,
                 realtime=context.realtime,
@@ -898,13 +1225,34 @@ def create_cup_agent(model: str = DEFAULT_AGENT_MODEL) -> Any:
                 context.held_cup_label = None
                 context.held_grasp_offset = None
             release_retreat = False
-            if success and was_holding:
+            release_settle = False
+            if success and stack_release:
+                release_settle = hold_command(
+                    context.env,
+                    target_position,
+                    max(context.config.release_contact_settle_duration, context.config.stack_release_settle_duration),
+                    diagnostics,
+                    viewer=context.viewer,
+                    realtime=context.realtime,
+                )
+                success = release_settle
+            elif success and was_holding:
                 release_retreat = _retreat_after_release(context, cup, diagnostics)
                 success = release_retreat
-                if success and release_center is not None:
-                    _stabilize_released_cup(context, cup, release_center)
-            context.last_tool_result = {"action": "open_gripper", "success": success, "release_retreat": release_retreat}
-            return _tool_result(success, "open_gripper", release_retreat=release_retreat)
+            context.last_tool_result = {
+                "action": "open_gripper",
+                "success": success,
+                "release_retreat": release_retreat,
+                "stack_release": stack_release,
+                "release_settle": release_settle,
+            }
+            return _tool_result(
+                success,
+                "open_gripper",
+                release_retreat=release_retreat,
+                stack_release=stack_release,
+                release_settle=release_settle,
+            )
         except Exception as exc:
             context.last_tool_result = {"action": "open_gripper", "success": False, "error": str(exc)}
             return _tool_result(False, "open_gripper", error=str(exc))
@@ -950,6 +1298,19 @@ def create_cup_agent(model: str = DEFAULT_AGENT_MODEL) -> Any:
             context.last_tool_result = {"action": "close_gripper", "success": False, "error": str(exc)}
             return _tool_result(False, "close_gripper", error=str(exc))
 
+    @function_tool
+    def pour_into(
+        ctx: RunContextWrapper[CupAgentContext],
+        apriltag_id: int,
+        duration: float | None = None,
+        tilt_degrees: float | None = None,
+    ) -> str:
+        """Pour from the currently held cup into the cup with the given AprilTag ID."""
+        return json.dumps(
+            execute_pour_into(ctx.context, apriltag_id, duration=duration, tilt_degrees=tilt_degrees),
+            sort_keys=True,
+        )
+
     instructions = (
         "You are a careful robot manipulation agent for a MuJoCo SO-101 cup scene. "
         "At each step you receive object poses, IDs, joint state, contact diagnostics, and camera screenshots. "
@@ -964,15 +1325,17 @@ def create_cup_agent(model: str = DEFAULT_AGENT_MODEL) -> Any:
         "7. open_gripper() to release the cup at the placement target. "
         "Prefer this semantic sequence over raw XYZ because the tools compute cup dimensions, tag offsets, "
         "and gripper offsets for approach, grasp, lift, and placement motions. "
+        "For two-cup pouring tasks, place the first cup on the tag, pick and lift the second cup, then call "
+        "pour_into(apriltag_id=6) while holding the second cup instead of placing it on top of the first. "
         "The task is to pick up the first cup, move it to the placement tag, and release it there using only "
-        "move_arm, open_gripper, and close_gripper. "
+        "move_arm, open_gripper, close_gripper, and pour_into. "
         "If the task is complete or impossible, respond with a concise status message instead of calling a tool."
     )
     return Agent[CupAgentContext](
         name="MuJoCo Cup Manipulation Agent",
         instructions=instructions,
         model=model,
-        tools=[move_arm, open_gripper, close_gripper],
+        tools=[move_arm, open_gripper, close_gripper, pour_into],
         tool_use_behavior="stop_on_first_tool",
     )
 

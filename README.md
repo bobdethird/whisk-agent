@@ -51,6 +51,14 @@ printf 'OPENAI_API_KEY=sk-...\n' > .env.local
 export OPENAI_API_KEY=sk-...
 ```
 
+For the Gemini-controlled cup agent, add a Gemini API key instead:
+
+```bash
+printf 'GEMINI_API_KEY=...\n' > .env.local
+# Or:
+export GEMINI_API_KEY=...
+```
+
 Verify the simulator and kinematics packages import:
 
 ```bash
@@ -267,9 +275,9 @@ The shared detector in `pose_estimation.py` can search multiple cameras, group d
 
 In the viewer, a green sphere marks the hover point estimated from vision, and a red sphere marks the equivalent hover point from the MuJoCo ground-truth tag site so you can compare estimate versus simulation truth. The default vision render is 2560 x 1920.
 
-## Run The Cup Pick/Place/Stack Test
+## Run The Cup Pick/Place/Pour Test
 
-`mujoco_sim/run_cup_pickup.py` loads `simulation_code/model/scene_cup.xml`, configures cup mass/friction, detects the cup-mounted AprilTag ID `6`, and detects a flat placement AprilTag ID `0` on the table. By default it picks the first cup, places it on the flat tag, picks a second cup with mounted AprilTag ID `1`, then places the second cup on top of the first. A blue marker shows each low pregrasp waypoint. The result prints pass/fail for each pickup and placement stage.
+`mujoco_sim/run_cup_pickup.py` loads `simulation_code/model/scene_cup.xml`, configures cup mass/friction, detects the cup-mounted AprilTag ID `6`, and detects a flat placement AprilTag ID `0` on the table. The agent flow picks the first cup, places it on the flat tag, picks a second cup with mounted AprilTag ID `1`, then pours from the second cup into the first instead of placing it on top. A blue marker shows each low pregrasp waypoint. The result prints pass/fail for each pickup and placement stage.
 
 Run the visual sequence test:
 
@@ -310,7 +318,7 @@ Important pickup controls:
 
 ## Run The OpenAI Cup Agent
 
-`mujoco_sim/run_openai_cup_agent.py` wraps the cup scene with an OpenAI Agents SDK loop. At the beginning of each step it sends structured object poses, IDs, current joints, contact diagnostics, and camera screenshots to the model. The model defaults to `gpt-5.5` and can call `move_arm`, `open_gripper`, or `close_gripper`.
+`mujoco_sim/run_openai_cup_agent.py` wraps the cup scene with an OpenAI Agents SDK loop. At the beginning of each step it sends structured object poses, IDs, current joints, contact diagnostics, and camera screenshots to the model. The model defaults to `gpt-5.5` and can call `move_arm`, `open_gripper`, `close_gripper`, or `pour_into`.
 
 The preferred arm command is semantic: `move_arm(apriltag_id=6, target="approach")`, then `target="grasp"`, then `target="lift"`, followed by `move_arm(apriltag_id=0, target="place_above")` and `target="place"`. The tool computes the cup center, cup radius/height, configured grasp clearances, tag-to-cup-center offset, and stored grasp offset before solving IK. Raw `move_arm(x=..., y=..., z=...)` is still available as a fallback.
 
@@ -347,6 +355,42 @@ Useful controls:
 - `--no-apriltag-estimates` skips detector-based pose estimates while still sending simulator-truth poses and screenshots.
 - `--artifact-root` changes where saved logs, summaries, and camera frames are written.
 - `--improve-headless` enables the bounded recursive run loop with pick-and-place success evaluation.
+
+## Run The Gemini Cup Agent
+
+`mujoco_sim/run_gemini_cup_agent.py` wraps the same cup scene with Gemini Robotics-ER. The default `--agent-mode tools` uses Gemini function calling: the model receives camera images plus compact scene JSON, calls local robot API tools, and the SDK feeds each tool result back to the model before returning a final status for that agent step. The legacy `--agent-mode json` path is still available for comparing schema-only JSON plans.
+
+First verify the observation path without calling Gemini:
+
+```bash
+python mujoco_sim/run_gemini_cup_agent.py --headless --dry-run --width 640 --height 480
+```
+
+Run the deterministic executor check without calling Gemini:
+
+```bash
+python mujoco_sim/run_gemini_cup_agent.py --headless --reference-plan --max-agent-steps 6 --width 640 --height 480
+```
+
+Run one Gemini planning step without moving the robot:
+
+```bash
+python mujoco_sim/run_gemini_cup_agent.py --headless --plan-only --max-agent-steps 1 --max-plan-actions 1 --width 640 --height 480
+```
+
+Run a bounded tool-calling cup-pour attempt:
+
+```bash
+python mujoco_sim/run_gemini_cup_agent.py --headless --max-agent-steps 16 --max-plan-actions 1 --width 640 --height 480
+```
+
+Useful Gemini controls:
+
+- `--agent-mode tools` uses Gemini native function calling; `--agent-mode json` uses the older structured-output action list.
+- `--task cup_pour` uses the cup-pour task spec. The legacy `--task cup_stack` alias maps to the same pour policy. `--task generic --task-instruction "..."` exercises the generic prompt layer against the same scene tools.
+- `--max-plan-actions` caps robot API calls in one Gemini step. Use `1` for the strictest observe -> tool -> observe cadence.
+- `--api-retries` retries retryable Gemini API errors such as quota backoff or transient service failures.
+- Gemini artifacts are written under `gemini_cup_agent_runs/<timestamp>/attempt_01/` with `prompt_*.txt`, `steps.jsonl`, `summary.json`, and per-camera frames.
 
 ## Troubleshooting
 
