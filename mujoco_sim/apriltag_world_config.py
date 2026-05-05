@@ -9,6 +9,7 @@ MODEL_DIR = ROOT_DIR / "simulation_code" / "model"
 SCENE_PATH = MODEL_DIR / "scene.xml"
 METADATA_PATH = MODEL_DIR / "apriltag_world_metadata.json"
 APRILTAG_ASSET_DIR = MODEL_DIR / "assets" / "apriltags"
+ROBOT_MODEL_PATH = MODEL_DIR / "so101.xml"
 
 TAG_FAMILY = "tag36h11"
 TAG_THICKNESS_M = 0.002

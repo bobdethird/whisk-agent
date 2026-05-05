@@ -4,18 +4,21 @@ This repository contains the URDF and MuJoCo (MJCF) files for the SO101 robot.
 
 ## Overview
 
-- The robot model files were generated using the [onshape-to-robot](https://github.com/Rhoban/onshape-to-robot) plugin from a CAD model designed in Onshape.
-- The generated URDFs were modified to allow meshes with relative paths instead of `package://...`.
-- Base collision meshes were removed due to problematic collision behavior during simulation and planning.
+- `so101.xml` is the active MuJoCo robot model and is vendored from the Google DeepMind MuJoCo Menagerie SO-101 package.
+- `robotstudio_so101/` keeps the upstream Menagerie package, including license, README, sample scenes, camera mount assets, and gripper collision meshes.
+- `so101_new_calib.xml` and `so101_new_calib.urdf` are retained as the original TheRobotStudio/LeRobot-compatible source models used by the kinematics adapter.
+- Base collision meshes were removed from the original generated model due to problematic collision behavior during simulation and planning.
 
 ## Calibration Methods
 
-The MuJoCo file `scene.xml` supports two differenly calibrated SO101 robot files:
+The generated MuJoCo file `scene.xml` includes `so101.xml` by default.
+
+The original source models provide two calibrated SO101 robot files:
 
 - **New Calibration (Default)**: Each joint's virtual zero is set to the **middle** of its joint range. Use -> `so101_new_calib.xml`. 
 - **Old Calibration**: Each joint's virtual zero is set to the configuration where the robot is **fully extended horizontally**. Use -> `so101_old_calib.xml`.
 
-To switch between calibration methods, modify the included robot file in `scene.xml`.
+To switch calibration methods, update `ROBOT_MODEL_PATH` in `mujoco_sim/apriltag_world_config.py` and regenerate `scene.xml`.
 
 ## Motor Parameters
 

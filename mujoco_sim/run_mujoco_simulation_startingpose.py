@@ -13,7 +13,7 @@ from so101_mujoco_utils import send_position_command, set_initial_pose
 
 
 MODEL_PATH = ROOT_DIR / "simulation_code" / "model" / "scene.xml"
-HORIZONTAL_WRIST_ROLL_DEGREES = 90.0
+HORIZONTAL_WRIST_ROLL_DEGREES = -90.0
 
 STARTING_POSITION = {
     "shoulder_pan": 0.0,

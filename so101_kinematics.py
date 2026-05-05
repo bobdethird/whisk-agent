@@ -13,8 +13,7 @@ MUJOCO_SITE_NAME = "gripperframe"
 ARM_JOINT_ORDER = JOINT_ORDER[:-1]
 GRIPPER_JOINT = JOINT_ORDER[-1]
 
-# LeRobot's URDF frame and MuJoCo's gripperframe site share the same origin,
-# but their local axes differ by this fixed rotation.
+# LeRobot's URDF frame and MuJoCo's gripperframe site use different local axes.
 URDF_TO_MUJOCO_GRIPPERFRAME_ROTATION = np.array(
     [
         [0.0, 0.0, -1.0],
@@ -23,6 +22,9 @@ URDF_TO_MUJOCO_GRIPPERFRAME_ROTATION = np.array(
     ],
     dtype=float,
 )
+# The Menagerie SO-101 model places gripperframe at the pinch/contact frame,
+# about 2 cm forward from LeRobot's URDF target frame in MuJoCo-frame +Z.
+URDF_TO_MUJOCO_GRIPPERFRAME_OFFSET = np.array([0.0, 0.0, 0.0199], dtype=float)
 
 
 def _require_pose_matrix(pose: np.ndarray) -> np.ndarray:
@@ -146,11 +148,13 @@ def rotation_error_rad(rotation_a: np.ndarray, rotation_b: np.ndarray) -> float:
 def urdf_pose_to_mujoco_gripperframe(pose: np.ndarray) -> np.ndarray:
     pose = _require_pose_matrix(pose).copy()
     pose[:3, :3] = pose[:3, :3] @ URDF_TO_MUJOCO_GRIPPERFRAME_ROTATION
+    pose[:3, 3] += pose[:3, :3] @ URDF_TO_MUJOCO_GRIPPERFRAME_OFFSET
     return pose
 
 
 def mujoco_gripperframe_to_urdf_pose(pose: np.ndarray) -> np.ndarray:
     pose = _require_pose_matrix(pose).copy()
+    pose[:3, 3] -= pose[:3, :3] @ URDF_TO_MUJOCO_GRIPPERFRAME_OFFSET
     pose[:3, :3] = pose[:3, :3] @ URDF_TO_MUJOCO_GRIPPERFRAME_ROTATION.T
     return pose
 
