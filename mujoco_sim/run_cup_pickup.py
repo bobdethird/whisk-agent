@@ -17,41 +17,49 @@ if str(ROOT_DIR) not in sys.path:
 
 from gripper import CLOSED_GRIPPER, OPEN_GRIPPER
 from motion import solve_ik
+from mujoco_sim.cup_scene_config import (
+    CUP_SCENE_PATH,
+    CUP_TAG_CAMERA_NAMES,
+    CUP_TAG_SIZE,
+    CUP_TAG_TO_CUP_CENTER_OFFSET,
+    DEFAULT_CUP_FRICTION,
+    DEFAULT_CUP_HALF_HEIGHT,
+    DEFAULT_CUP_MASS,
+    DEFAULT_CUP_RADIUS,
+    DEFAULT_CUP_RIM_HALF_HEIGHT,
+    DEFAULT_CUP_RIM_OVERHANG,
+    DEFAULT_JAW_FRICTION,
+    PLACE_TAG,
+    PLACE_TAG_CAMERA_NAMES,
+    PRIMARY_CUP,
+    SECOND_CUP,
+    TOP_DOWN_CAMERA_NAME,
+    WRIST_CAMERA_NAME,
+    CupObjectSpec,
+)
 from pose_estimation import TagPoseEstimate, detect_apriltags
 from sim_env import SimEnv, create_env
 from so101_mujoco_utils import JOINT_ORDER, convert_to_dictionary, send_position_command
 
 
-MODEL_PATH = ROOT_DIR / "simulation_code" / "model" / "scene_cup.xml"
-CUP_BODY_NAME = "cup"
-CUP_FREEJOINT_NAME = "cup_freejoint"
-SECOND_CUP_BODY_NAME = "second_cup"
-SECOND_CUP_FREEJOINT_NAME = "second_cup_freejoint"
+MODEL_PATH = CUP_SCENE_PATH
+CUP_BODY_NAME = PRIMARY_CUP.body_name
+CUP_FREEJOINT_NAME = PRIMARY_CUP.freejoint_name
+SECOND_CUP_BODY_NAME = SECOND_CUP.body_name
+SECOND_CUP_FREEJOINT_NAME = SECOND_CUP.freejoint_name
 FIXED_JAW_BODY_NAME = "gripper"
 MOVING_JAW_BODY_NAME = "moving_jaw_so101_v1"
-DEFAULT_CUP_POSITION = (0.32, 0.0, 0.045)
-DEFAULT_SECOND_CUP_POSITION = (0.32, -0.14, 0.045)
-DEFAULT_PLACE_TAG_POSITION = (0.44, -0.08, 0.002)
-DEFAULT_JAW_FRICTION = (1.2, 0.005, 0.0005)
-DEFAULT_CUP_FRICTION = (1.0, 0.02, 0.002)
-DEFAULT_CUP_MASS = 0.025
-DEFAULT_CUP_RADIUS = 0.023
-DEFAULT_CUP_HALF_HEIGHT = 0.045
-DEFAULT_CUP_RIM_OVERHANG = 0.007
-DEFAULT_CUP_RIM_HALF_HEIGHT = 0.004
+DEFAULT_CUP_POSITION = PRIMARY_CUP.initial_position
+DEFAULT_SECOND_CUP_POSITION = SECOND_CUP.initial_position
+DEFAULT_PLACE_TAG_POSITION = PLACE_TAG.pos
 DEFAULT_SWEEP_JAW_FRICTIONS = (0.8, 1.0, 1.5, 2.0)
 DEFAULT_SWEEP_CUP_MASSES = (0.03, 0.045, 0.07)
 DEFAULT_SWEEP_GRIPPER_FORCES = (1.5, 2.0, 2.94)
-PLACE_TAG_ID = 0
-SECOND_CUP_TAG_ID = 1
-CUP_TAG_ID = 6
-CUP_TAG_SIZE = 0.024
-WRIST_CAMERA_NAME = "wrist_cam"
-TOP_DOWN_CAMERA_NAME = "table_observer"
-CUP_TAG_CAMERA_NAMES = (WRIST_CAMERA_NAME, TOP_DOWN_CAMERA_NAME)
-PLACE_TAG_CAMERA_NAMES = (TOP_DOWN_CAMERA_NAME,)
+PLACE_TAG_ID = PLACE_TAG.tag_id
+SECOND_CUP_TAG_ID = SECOND_CUP.tag.tag_id
+CUP_TAG_ID = PRIMARY_CUP.tag.tag_id
 CUP_DEBUG_FRAME_DIR = ROOT_DIR / "cup_camera_debug_frames"
-DEFAULT_TAG_TO_CUP_CENTER_OFFSET = (0.0, 0.0, 0.026)
+DEFAULT_TAG_TO_CUP_CENTER_OFFSET = CUP_TAG_TO_CUP_CENTER_OFFSET
 CAMERA_FOV_VISUALIZATION_DISTANCE = 0.25
 CAMERA_FOV_VISUALIZATION_ASPECT = 4.0 / 3.0
 CAMERA_FOV_LINE_RADIUS = 0.001
@@ -234,14 +242,28 @@ def _object_name(model: mujoco.MjModel, obj_type: mujoco.mjtObj, obj_id: int) ->
     return name or f"{obj_type.name.lower()}_{obj_id}"
 
 
-def primary_cup_spec(config: PickupConfig) -> CupSpec:
+def cup_spec_from_scene(
+    cup_scene: CupObjectSpec,
+    initial_position: tuple[float, float, float],
+    tag_id: int,
+    tag_to_cup_center_offset: tuple[float, float, float],
+) -> CupSpec:
     return CupSpec(
-        label="first cup",
-        body_name=CUP_BODY_NAME,
-        freejoint_name=CUP_FREEJOINT_NAME,
-        side_geom_name="cup_side_collision",
-        rim_geom_name="cup_rim_collision",
-        visual_geom_name="cup_visual",
+        label=cup_scene.label,
+        body_name=cup_scene.body_name,
+        freejoint_name=cup_scene.freejoint_name,
+        side_geom_name=cup_scene.side_geom_name,
+        rim_geom_name=cup_scene.rim_geom_name,
+        visual_geom_name=cup_scene.visual_geom_name,
+        initial_position=initial_position,
+        tag_id=tag_id,
+        tag_to_cup_center_offset=tag_to_cup_center_offset,
+    )
+
+
+def primary_cup_spec(config: PickupConfig) -> CupSpec:
+    return cup_spec_from_scene(
+        PRIMARY_CUP,
         initial_position=config.cup_position,
         tag_id=config.cup_tag_id,
         tag_to_cup_center_offset=config.tag_to_cup_center_offset,
@@ -249,13 +271,8 @@ def primary_cup_spec(config: PickupConfig) -> CupSpec:
 
 
 def second_cup_spec(config: PickupConfig) -> CupSpec:
-    return CupSpec(
-        label="second cup",
-        body_name=SECOND_CUP_BODY_NAME,
-        freejoint_name=SECOND_CUP_FREEJOINT_NAME,
-        side_geom_name="second_cup_side_collision",
-        rim_geom_name="second_cup_rim_collision",
-        visual_geom_name="second_cup_visual",
+    return cup_spec_from_scene(
+        SECOND_CUP,
         initial_position=config.second_cup_position,
         tag_id=config.second_cup_tag_id,
         tag_to_cup_center_offset=config.tag_to_cup_center_offset,
@@ -1177,7 +1194,7 @@ def parse_args() -> argparse.Namespace:
         help="Run the original single pickup or the pick/place/stack sequence.",
     )
     parser.add_argument("--sweep", action="store_true", help="Run a headless jaw-friction/cup-mass sweep.")
-    parser.add_argument("--cup-radius", type=float, default=0.023, help="Cup side collision radius in meters.")
+    parser.add_argument("--cup-radius", type=float, default=DEFAULT_CUP_RADIUS, help="Cup side collision radius in meters.")
     parser.add_argument("--cup-mass", type=float, default=DEFAULT_CUP_MASS, help="Cup mass in kg.")
     parser.add_argument("--gripper-force", type=float, default=1.5, help="Symmetric gripper actuator force range.")
     parser.add_argument("--cup-friction", type=float, nargs=3, default=DEFAULT_CUP_FRICTION, metavar=("SLIDE", "TORSION", "ROLL"))

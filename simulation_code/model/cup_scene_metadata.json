@@ -1,0 +1,153 @@
+{
+  "scene": "simulation_code/model/scene_cup.xml",
+  "place_tag": {
+    "id": 0,
+    "name": "place_tag36h11_00000",
+    "body": "place_tag36h11_00000",
+    "site": "place_tag36h11_00000_site",
+    "asset": "simulation_code/model/assets/apriltags/tag36_11_00000.png",
+    "size_m": 0.024,
+    "pos": [
+      0.44,
+      -0.08,
+      0.002
+    ],
+    "euler": [
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "table_tags": [
+    {
+      "id": 0,
+      "name": "place_tag36h11_00000",
+      "body": "place_tag36h11_00000",
+      "site": "place_tag36h11_00000_site",
+      "asset": "simulation_code/model/assets/apriltags/tag36_11_00000.png",
+      "size_m": 0.024,
+      "pos": [
+        0.44,
+        -0.08,
+        0.002
+      ],
+      "euler": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "cups": [
+    {
+      "label": "first cup",
+      "body": "cup",
+      "freejoint": "cup_freejoint",
+      "side_geom": "cup_side_collision",
+      "rim_geom": "cup_rim_collision",
+      "visual_geom": "cup_visual",
+      "initial_position": [
+        0.32,
+        0.0,
+        0.045
+      ],
+      "tag_to_center_offset": [
+        0.0,
+        0.0,
+        0.026
+      ],
+      "tag": {
+        "id": 6,
+        "name": "cup_tag36h11_00006",
+        "body": "cup_tag36h11_00006",
+        "site": "cup_tag36h11_00006_site",
+        "asset": "simulation_code/model/assets/apriltags/tag36_11_00006.png",
+        "size_m": 0.024,
+        "pos": [
+          -0.026,
+          0.0,
+          0.0
+        ],
+        "quat": [
+          0.7071067812,
+          0.0,
+          -0.7071067812,
+          0.0
+        ]
+      }
+    },
+    {
+      "label": "second cup",
+      "body": "second_cup",
+      "freejoint": "second_cup_freejoint",
+      "side_geom": "second_cup_side_collision",
+      "rim_geom": "second_cup_rim_collision",
+      "visual_geom": "second_cup_visual",
+      "initial_position": [
+        0.32,
+        -0.14,
+        0.045
+      ],
+      "tag_to_center_offset": [
+        0.0,
+        0.0,
+        0.026
+      ],
+      "tag": {
+        "id": 1,
+        "name": "second_cup_tag36h11_00001",
+        "body": "second_cup_tag36h11_00001",
+        "site": "second_cup_tag36h11_00001_site",
+        "asset": "simulation_code/model/assets/apriltags/tag36_11_00001.png",
+        "size_m": 0.024,
+        "pos": [
+          -0.026,
+          0.0,
+          0.0
+        ],
+        "quat": [
+          0.7071067812,
+          0.0,
+          -0.7071067812,
+          0.0
+        ]
+      }
+    }
+  ],
+  "cameras": [
+    {
+      "name": "cup_observer",
+      "pos": [
+        0.25,
+        -0.35,
+        0.35
+      ],
+      "xyaxes": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.55,
+        0.4
+      ],
+      "fovy": 55.0
+    },
+    {
+      "name": "table_observer",
+      "pos": [
+        0.08,
+        -0.28,
+        0.18
+      ],
+      "xyaxes": [
+        0.7945188897,
+        -0.6072394371,
+        0.0,
+        0.1150475128,
+        0.1505294561,
+        0.9818884624
+      ],
+      "fovy": 60.0
+    }
+  ]
+}
