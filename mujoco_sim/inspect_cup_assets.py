@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 MODEL_DIR = ROOT_DIR / "simulation_code" / "model"
-DEFAULT_ASSET_ROOT = MODEL_DIR / "assets" / "objects" / "_downloads" / "glass_cup_nvidia" / "glass_cup"
+DEFAULT_ASSET_ROOT = MODEL_DIR / "assets" / "objects" / "nvidia_glass_cup" / "glass_cup"
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,13 @@ class CupCandidate:
         return self.visual_bounds.height
 
 
+@dataclass(frozen=True)
+class SkippedCupCandidate:
+    name: str
+    root: Path
+    missing: tuple[str, ...]
+
+
 def read_obj_bounds(path: Path) -> ObjBounds:
     vertices: list[tuple[float, float, float]] = []
     for line in path.read_text().splitlines():
@@ -59,13 +67,41 @@ def read_obj_bounds(path: Path) -> ObjBounds:
     return ObjBounds(path=path, min_xyz=min_xyz, max_xyz=max_xyz)
 
 
+def _collision_meshes(root: Path) -> list[Path]:
+    return sorted((root / "collision").glob("*.obj"))
+
+
+def missing_asset_reasons(root: Path) -> tuple[str, ...]:
+    missing: list[str] = []
+    if not (root / "model.xml").exists():
+        missing.append("model.xml")
+    if not (root / "visual" / "Clear.obj").exists():
+        missing.append("visual/Clear.obj")
+    if not (root / "visual" / "T_BC001.png").exists():
+        missing.append("visual/T_BC001.png")
+    if not _collision_meshes(root):
+        missing.append("collision/*.obj")
+    return tuple(missing)
+
+
+def skipped_candidates(asset_root: Path) -> list[SkippedCupCandidate]:
+    skipped: list[SkippedCupCandidate] = []
+    for root in sorted(asset_root.glob("GlassCup*")):
+        if not root.is_dir():
+            continue
+        missing = missing_asset_reasons(root)
+        if missing:
+            skipped.append(SkippedCupCandidate(name=root.name, root=root, missing=missing))
+    return skipped
+
+
 def cup_candidates(asset_root: Path) -> list[CupCandidate]:
     candidates: list[CupCandidate] = []
     for model_xml in sorted(asset_root.glob("GlassCup*/model.xml")):
         root = model_xml.parent
         visual_mesh = root / "visual" / "Clear.obj"
-        collision_meshes = sorted((root / "collision").glob("*.obj"))
-        if not visual_mesh.exists() or not collision_meshes:
+        collision_meshes = _collision_meshes(root)
+        if missing_asset_reasons(root):
             continue
         candidates.append(
             CupCandidate(
@@ -76,6 +112,12 @@ def cup_candidates(asset_root: Path) -> list[CupCandidate]:
             )
         )
     return sorted(candidates, key=lambda candidate: (candidate.diameter, candidate.height))
+
+
+def print_skipped(skipped: list[SkippedCupCandidate]) -> None:
+    for candidate in skipped:
+        missing = ", ".join(candidate.missing)
+        print(f"skipped {candidate.name}: missing {missing}", file=sys.stderr)
 
 
 def print_report(candidates: list[CupCandidate]) -> None:
@@ -107,6 +149,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     candidates = cup_candidates(args.asset_root)
+    print_skipped(skipped_candidates(args.asset_root))
     if not candidates:
         raise SystemExit(f"No cup candidates found under {args.asset_root}")
     print_report(candidates)

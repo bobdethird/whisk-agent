@@ -43,6 +43,14 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
+For the OpenAI-controlled cup agent, add an API key to `.env.local` or export it before running the agent loop:
+
+```bash
+printf 'OPENAI_API_KEY=sk-...\n' > .env.local
+# Or:
+export OPENAI_API_KEY=sk-...
+```
+
 Verify the simulator and kinematics packages import:
 
 ```bash
@@ -69,6 +77,9 @@ simulation_code/
         │   ├── tag_card.obj
         │   ├── tag36h11-<id>.svg
         │   └── tag36_11_<id>.png
+        ├── objects/
+        │   └── nvidia_glass_cup/
+        │       └── glass_cup/
         └── *.stl
 ```
 
@@ -76,7 +87,7 @@ The active MuJoCo robot model is `simulation_code/model/so101.xml`, vendored fro
 
 If the SO-101 model files are missing, download the Menagerie SO-101 package from:
 
-https://github.com/google-deepmind/mujoco_menagerie/tree/main/robotstudio_so101
+[https://github.com/google-deepmind/mujoco_menagerie/tree/main/robotstudio_so101](https://github.com/google-deepmind/mujoco_menagerie/tree/main/robotstudio_so101)
 
 Place `so101.xml` and the package assets in `simulation_code/model/`, and keep the upstream package copy under `simulation_code/model/robotstudio_so101/`.
 
@@ -106,7 +117,7 @@ cd /path/to/agent-1
 python mujoco_sim/generate_cup_scene.py
 ```
 
-For the focused cup scene, add table placement tags by adding `AprilTagSpec(...)` entries to `TABLE_TAGS` in `mujoco_sim/cup_scene_config.py`. Add another cup by adding a `CupObjectSpec(...)` to `CUPS`; mounted AprilTags live in the cup body frame, so their `pos` and `quat` move with the cup automatically.
+For the focused cup scene, add table placement tags by adding `AprilTagSpec(...)` entries to `TABLE_TAGS` in `mujoco_sim/cup_scene_config.py`. Add another cup by adding a `CupObjectSpec(...)` to `CUPS`; mounted AprilTags live in the cup body frame, so their `pos` and `quat` move with the cup automatically. The cup geometry uses NVIDIA `GlassCup023` assets under `simulation_code/model/assets/objects/nvidia_glass_cup/glass_cup/`, with `Clear.obj` for the visual mesh and the decomposed `collision/*.obj` meshes for contact.
 
 ## Run The Viewer
 
@@ -181,11 +192,11 @@ The script uses this starting pose:
 ```python
 STARTING_POSITION = {
     "shoulder_pan": 0.0,
-    "shoulder_lift": -45.0,
-    "elbow_flex": 90.0,
-    "wrist_flex": -45.0,
+    "shoulder_lift": -76.2,
+    "elbow_flex": 35.8,
+    "wrist_flex": 61.9,
     "wrist_roll": -90.0,
-    "gripper": 50.0,
+    "gripper": 55.6,
 }
 ```
 
@@ -258,7 +269,7 @@ In the viewer, a green sphere marks the hover point estimated from vision, and a
 
 ## Run The Cup Pick/Place/Stack Test
 
-`mujoco_sim/run_cup_pickup.py` loads `simulation_code/model/scene_cup.xml`, configures cup mass/friction/size, detects the cup-mounted AprilTag ID `6`, and detects a flat placement AprilTag ID `0` on the table. By default it picks the first cup, places it on the flat tag, picks a second cup with mounted AprilTag ID `1`, then places the second cup on top of the first. A blue marker shows each low pregrasp waypoint. The result prints pass/fail for each pickup and placement stage.
+`mujoco_sim/run_cup_pickup.py` loads `simulation_code/model/scene_cup.xml`, configures cup mass/friction, detects the cup-mounted AprilTag ID `6`, and detects a flat placement AprilTag ID `0` on the table. By default it picks the first cup, places it on the flat tag, picks a second cup with mounted AprilTag ID `1`, then places the second cup on top of the first. A blue marker shows each low pregrasp waypoint. The result prints pass/fail for each pickup and placement stage.
 
 Run the visual sequence test:
 
@@ -290,12 +301,52 @@ Important pickup controls:
 
 - `--cup-position X Y Z` changes the configured cup pose before detection.
 - `--second-cup-position X Y Z` changes the configured second-cup pose before detection.
-- `--cup-radius`, `--cup-mass`, `--cup-friction`, `--jaw-friction`, and `--gripper-force` tune contact behavior.
-- `--first-waypoint-clearance` tunes the pregrasp waypoint distance beyond the cup radius; forward and left offsets are computed as `cup_radius + clearance`.
+- `--cup-radius` tunes approach planning around the fixed mesh cup; `--cup-mass`, `--cup-friction`, `--jaw-friction`, and `--gripper-force` tune contact behavior.
+- `--side-grasp-offset` sets the small depth offset toward the robot, and `--lateral-grasp-offset` is added to `cup_radius` for the fixed-jaw left offset. This keeps the fixed jaw on the cup edge instead of aiming at the cup center or top.
 - `--cup-tag-id`, `--second-cup-tag-id`, `--cup-tag-size`, and `--tag-to-cup-center-offset X Y Z` describe the cup-mounted tags.
 - `--place-tag-id`, `--place-tag-size`, and `--place-tag-position X Y Z` describe the flat placement tag.
 - `--place-approach-height`, `--place-lateral-retreat`, `--place-success-xy-tolerance`, and `--place-success-z-tolerance` tune placement motion and success checks.
 - `--allow-config-cup-position-fallback` uses configured cup/place tag positions if tag detection fails; without it, missing tag detection is an error.
+
+## Run The OpenAI Cup Agent
+
+`mujoco_sim/run_openai_cup_agent.py` wraps the cup scene with an OpenAI Agents SDK loop. At the beginning of each step it sends structured object poses, IDs, current joints, contact diagnostics, and camera screenshots to the model. The model defaults to `gpt-5.5` and can call `move_arm`, `open_gripper`, or `close_gripper`.
+
+The preferred arm command is semantic: `move_arm(apriltag_id=6, target="approach")`, then `target="grasp"`, then `target="lift"`, followed by `move_arm(apriltag_id=0, target="place_above")` and `target="place"`. The tool computes the cup center, cup radius/height, configured grasp clearances, tag-to-cup-center offset, and stored grasp offset before solving IK. Raw `move_arm(x=..., y=..., z=...)` is still available as a fallback.
+
+First verify the observation path without calling OpenAI:
+
+```bash
+python mujoco_sim/run_openai_cup_agent.py --headless --dry-run --width 640 --height 480
+```
+
+The dry run and live runs write artifacts under `openai_cup_agent_runs/<timestamp>/attempt_01/`. Each attempt includes `steps.jsonl`, a final `summary.json`, and the exact camera frames sent to the model in `frames/` using names like `step_003_wrist_cam.png`.
+
+Run one headless model-controlled step:
+
+```bash
+python mujoco_sim/run_openai_cup_agent.py --headless --max-agent-steps 1 --width 640 --height 480
+```
+
+Run bounded recursive headless improvement until the first cup is picked, moved to the placement tag, and released, stopping early on success:
+
+```bash
+python mujoco_sim/run_openai_cup_agent.py --headless --improve-headless --max-attempts 10 --max-agent-steps 12 --width 640 --height 480
+```
+
+Run with the MuJoCo viewer:
+
+```bash
+mjpython mujoco_sim/run_openai_cup_agent.py --max-agent-steps 12
+```
+
+Useful controls:
+
+- `--model` changes the OpenAI model, defaulting to `gpt-5.5`.
+- `--camera` selects camera views to send. Repeat it or pass comma-separated names such as `--camera wrist_cam,table_observer,cup_observer`.
+- `--no-apriltag-estimates` skips detector-based pose estimates while still sending simulator-truth poses and screenshots.
+- `--artifact-root` changes where saved logs, summaries, and camera frames are written.
+- `--improve-headless` enables the bounded recursive run loop with pick-and-place success evaluation.
 
 ## Troubleshooting
 

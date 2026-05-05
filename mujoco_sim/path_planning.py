@@ -46,6 +46,7 @@ class CollisionPlanningContext:
     object_body_names: tuple[str, ...] = DEFAULT_OBJECT_BODY_NAMES
     attached_body_name: str | None = None
     attached_freejoint_name: str | None = None
+    allowed_support_body_names: tuple[str, ...] = ()
 
 
 class PlanningError(RuntimeError):
@@ -54,6 +55,70 @@ class PlanningError(RuntimeError):
 
 class PlannerUnavailableError(PlanningError):
     pass
+
+
+class RuntimeCollisionGuard:
+    def __init__(
+        self,
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        collision_context: CollisionPlanningContext,
+    ) -> None:
+        self.model = model
+        self.context = collision_context
+        self.gripper_body_ids = _body_ids(model, collision_context.gripper_body_names)
+        self.allowed_support_body_ids = _body_ids(model, collision_context.allowed_support_body_names)
+        self.robot_geom_ids, self.obstacle_geom_ids = _partition_collision_geoms(model, collision_context.object_body_names)
+        self.attached_body_id = _optional_body_id(model, collision_context.attached_body_name)
+        self.initial_contact_pairs = _contact_pairs(data)
+
+    def violation(self, data: mujoco.MjData) -> str | None:
+        for contact_index in range(data.ncon):
+            contact = data.contact[contact_index]
+            geom1 = int(contact.geom1)
+            geom2 = int(contact.geom2)
+            pair = frozenset((geom1, geom2))
+            if pair in self.initial_contact_pairs:
+                continue
+            if self._contact_is_allowed(geom1, geom2):
+                continue
+            if self._contact_is_relevant(geom1, geom2):
+                return f"{self._geom_name(geom1)} <-> {self._geom_name(geom2)}"
+        return None
+
+    def _contact_is_allowed(self, geom1: int, geom2: int) -> bool:
+        if geom1 in self.context.allowed_gripper_contact_geom_ids and _body_in_subtree(
+            self.model, _geom_body_id(self.model, geom2), self.gripper_body_ids
+        ):
+            return True
+        if geom2 in self.context.allowed_gripper_contact_geom_ids and _body_in_subtree(
+            self.model, _geom_body_id(self.model, geom1), self.gripper_body_ids
+        ):
+            return True
+        if self._is_allowed_support_contact(geom1, geom2):
+            return True
+        return False
+
+    def _is_allowed_support_contact(self, geom1: int, geom2: int) -> bool:
+        if self.attached_body_id is None or not self.allowed_support_body_ids:
+            return False
+        body1 = _geom_body_id(self.model, geom1)
+        body2 = _geom_body_id(self.model, geom2)
+        attached1 = _is_descendant_body(self.model, body1, self.attached_body_id)
+        attached2 = _is_descendant_body(self.model, body2, self.attached_body_id)
+        support1 = _body_in_subtree(self.model, body1, self.allowed_support_body_ids)
+        support2 = _body_in_subtree(self.model, body2, self.allowed_support_body_ids)
+        return (attached1 and support2) or (attached2 and support1)
+
+    def _contact_is_relevant(self, geom1: int, geom2: int) -> bool:
+        robot1, robot2 = geom1 in self.robot_geom_ids, geom2 in self.robot_geom_ids
+        obstacle1, obstacle2 = geom1 in self.obstacle_geom_ids, geom2 in self.obstacle_geom_ids
+        attached1 = self.attached_body_id is not None and _geom_body_id(self.model, geom1) == self.attached_body_id
+        attached2 = self.attached_body_id is not None and _geom_body_id(self.model, geom2) == self.attached_body_id
+        return (robot1 and obstacle2) or (robot2 and obstacle1) or (attached1 and obstacle2) or (attached2 and obstacle1)
+
+    def _geom_name(self, geom_id: int) -> str:
+        return mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, int(geom_id)) or f"geom_{geom_id}"
 
 
 def is_arm_motion(start_position: dict[str, float], target_position: dict[str, float], tolerance_degrees: float = 1e-5) -> bool:
@@ -226,6 +291,7 @@ class MujocoPathValidator:
         self.collision_context = collision_context
         self.data = mujoco.MjData(env.model)
         self.gripper_body_ids = _body_ids(env.model, collision_context.gripper_body_names)
+        self.allowed_support_body_ids = _body_ids(env.model, collision_context.allowed_support_body_names)
         self.attachment_anchor_body_id = _optional_body_id(
             env.model,
             collision_context.gripper_body_names[0] if collision_context.gripper_body_names else None,
@@ -249,18 +315,18 @@ class MujocoPathValidator:
         steps = max(1, math.ceil(distance / max_step_degrees))
         for step in range(steps + 1):
             alpha = step / steps
-            if not self.state_is_valid((1.0 - alpha) * start + alpha * goal):
+            if not self.state_is_valid((1.0 - alpha) * start + alpha * goal, allow_initial_contacts=step == 0):
                 if self.config.debug:
                     print(f"planner rejected path sample {step}/{steps}")
                 return False
         return True
 
-    def state_is_valid(self, arm_degrees: np.ndarray) -> bool:
+    def state_is_valid(self, arm_degrees: np.ndarray, allow_initial_contacts: bool = False) -> bool:
         self._set_arm_state(arm_degrees)
         for contact_index in range(self.data.ncon):
             contact = self.data.contact[contact_index]
             pair = frozenset((int(contact.geom1), int(contact.geom2)))
-            if pair in self.initial_contact_pairs:
+            if allow_initial_contacts and pair in self.initial_contact_pairs:
                 continue
             if self._contact_is_allowed(int(contact.geom1), int(contact.geom2)):
                 continue
@@ -299,14 +365,31 @@ class MujocoPathValidator:
 
     def _contact_pairs_for_current_state(self) -> set[frozenset[int]]:
         self._set_arm_state(_arm_array_degrees(convert_to_dictionary(self.start_qpos)))
-        return {frozenset((int(self.data.contact[index].geom1), int(self.data.contact[index].geom2))) for index in range(self.data.ncon)}
+        return _contact_pairs(self.data)
 
     def _contact_is_allowed(self, geom1: int, geom2: int) -> bool:
-        if geom1 in self.collision_context.allowed_gripper_contact_geom_ids and _geom_body_id(self.model, geom2) in self.gripper_body_ids:
+        if geom1 in self.collision_context.allowed_gripper_contact_geom_ids and _body_in_subtree(
+            self.model, _geom_body_id(self.model, geom2), self.gripper_body_ids
+        ):
             return True
-        if geom2 in self.collision_context.allowed_gripper_contact_geom_ids and _geom_body_id(self.model, geom1) in self.gripper_body_ids:
+        if geom2 in self.collision_context.allowed_gripper_contact_geom_ids and _body_in_subtree(
+            self.model, _geom_body_id(self.model, geom1), self.gripper_body_ids
+        ):
+            return True
+        if self._is_allowed_support_contact(geom1, geom2):
             return True
         return False
+
+    def _is_allowed_support_contact(self, geom1: int, geom2: int) -> bool:
+        if self.attached_body_id is None or not self.allowed_support_body_ids:
+            return False
+        body1 = _geom_body_id(self.model, geom1)
+        body2 = _geom_body_id(self.model, geom2)
+        attached1 = _is_descendant_body(self.model, body1, self.attached_body_id)
+        attached2 = _is_descendant_body(self.model, body2, self.attached_body_id)
+        support1 = _body_in_subtree(self.model, body1, self.allowed_support_body_ids)
+        support2 = _body_in_subtree(self.model, body2, self.allowed_support_body_ids)
+        return (attached1 and support2) or (attached2 and support1)
 
     def _contact_is_relevant(self, geom1: int, geom2: int) -> bool:
         robot1, robot2 = geom1 in self.robot_geom_ids, geom2 in self.robot_geom_ids
@@ -430,6 +513,14 @@ def _body_ids(model: mujoco.MjModel, body_names: tuple[str, ...]) -> set[int]:
     ids = {_optional_body_id(model, name) for name in body_names}
     ids.discard(None)
     return {int(body_id) for body_id in ids}
+
+
+def _body_in_subtree(model: mujoco.MjModel, body_id: int, ancestor_body_ids: set[int]) -> bool:
+    return any(_is_descendant_body(model, body_id, ancestor_body_id) for ancestor_body_id in ancestor_body_ids)
+
+
+def _contact_pairs(data: mujoco.MjData) -> set[frozenset[int]]:
+    return {frozenset((int(data.contact[index].geom1), int(data.contact[index].geom2))) for index in range(data.ncon)}
 
 
 def _optional_body_id(model: mujoco.MjModel, body_name: str | None) -> int | None:

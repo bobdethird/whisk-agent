@@ -1,5 +1,42 @@
 {
   "scene": "simulation_code/model/scene_cup.xml",
+  "cup_asset": {
+    "model_name": "GlassCup023",
+    "root": "simulation_code/model/assets/objects/nvidia_glass_cup/glass_cup/GlassCup023",
+    "visual_mesh": "simulation_code/model/assets/objects/nvidia_glass_cup/glass_cup/GlassCup023/visual/Clear.obj",
+    "texture": "simulation_code/model/assets/objects/nvidia_glass_cup/glass_cup/GlassCup023/visual/T_BC001.png",
+    "collision_meshes": [
+      "simulation_code/model/assets/objects/nvidia_glass_cup/glass_cup/GlassCup023/collision/collision_mesh_collision_0.obj",
+      "simulation_code/model/assets/objects/nvidia_glass_cup/glass_cup/GlassCup023/collision/collision_mesh_collision_1.obj",
+      "simulation_code/model/assets/objects/nvidia_glass_cup/glass_cup/GlassCup023/collision/collision_mesh_collision_2.obj",
+      "simulation_code/model/assets/objects/nvidia_glass_cup/glass_cup/GlassCup023/collision/collision_mesh_collision_3.obj",
+      "simulation_code/model/assets/objects/nvidia_glass_cup/glass_cup/GlassCup023/collision/collision_mesh_collision_4.obj",
+      "simulation_code/model/assets/objects/nvidia_glass_cup/glass_cup/GlassCup023/collision/collision_mesh_collision_5.obj",
+      "simulation_code/model/assets/objects/nvidia_glass_cup/glass_cup/GlassCup023/collision/collision_mesh_collision_6.obj",
+      "simulation_code/model/assets/objects/nvidia_glass_cup/glass_cup/GlassCup023/collision/collision_mesh_collision_7.obj",
+      "simulation_code/model/assets/objects/nvidia_glass_cup/glass_cup/GlassCup023/collision/collision_mesh_collision_8.obj",
+      "simulation_code/model/assets/objects/nvidia_glass_cup/glass_cup/GlassCup023/collision/collision_mesh_collision_9.obj",
+      "simulation_code/model/assets/objects/nvidia_glass_cup/glass_cup/GlassCup023/collision/collision_mesh_collision_10.obj",
+      "simulation_code/model/assets/objects/nvidia_glass_cup/glass_cup/GlassCup023/collision/collision_mesh_collision_11.obj",
+      "simulation_code/model/assets/objects/nvidia_glass_cup/glass_cup/GlassCup023/collision/collision_mesh_collision_12.obj",
+      "simulation_code/model/assets/objects/nvidia_glass_cup/glass_cup/GlassCup023/collision/collision_mesh_collision_13.obj",
+      "simulation_code/model/assets/objects/nvidia_glass_cup/glass_cup/GlassCup023/collision/collision_mesh_collision_14.obj"
+    ],
+    "radius_m": 0.032809,
+    "half_height_m": 0.0735655,
+    "bounds_m": {
+      "min": [
+        -0.032809,
+        -0.032809,
+        -0.0735655
+      ],
+      "max": [
+        0.032809,
+        0.032809,
+        0.0735655
+      ]
+    }
+  },
   "place_tag": {
     "id": 0,
     "name": "place_tag36h11_00000",
@@ -43,18 +80,33 @@
       "label": "first cup",
       "body": "cup",
       "freejoint": "cup_freejoint",
-      "side_geom": "cup_side_collision",
-      "rim_geom": "cup_rim_collision",
+      "collision_geoms": [
+        "cup_collision_00",
+        "cup_collision_01",
+        "cup_collision_02",
+        "cup_collision_03",
+        "cup_collision_04",
+        "cup_collision_05",
+        "cup_collision_06",
+        "cup_collision_07",
+        "cup_collision_08",
+        "cup_collision_09",
+        "cup_collision_10",
+        "cup_collision_11",
+        "cup_collision_12",
+        "cup_collision_13",
+        "cup_collision_14"
+      ],
       "visual_geom": "cup_visual",
       "initial_position": [
         0.32,
         0.0,
-        0.045
+        0.0735655
       ],
       "tag_to_center_offset": [
         0.0,
         0.0,
-        0.02
+        0.034809
       ],
       "tag": {
         "id": 6,
@@ -64,7 +116,7 @@
         "asset": "simulation_code/model/assets/apriltags/tag36_11_00006.png",
         "size_m": 0.024,
         "pos": [
-          -0.026,
+          -0.034809,
           0.0,
           0.0
         ],
@@ -80,18 +132,33 @@
       "label": "second cup",
       "body": "second_cup",
       "freejoint": "second_cup_freejoint",
-      "side_geom": "second_cup_side_collision",
-      "rim_geom": "second_cup_rim_collision",
+      "collision_geoms": [
+        "second_cup_collision_00",
+        "second_cup_collision_01",
+        "second_cup_collision_02",
+        "second_cup_collision_03",
+        "second_cup_collision_04",
+        "second_cup_collision_05",
+        "second_cup_collision_06",
+        "second_cup_collision_07",
+        "second_cup_collision_08",
+        "second_cup_collision_09",
+        "second_cup_collision_10",
+        "second_cup_collision_11",
+        "second_cup_collision_12",
+        "second_cup_collision_13",
+        "second_cup_collision_14"
+      ],
       "visual_geom": "second_cup_visual",
       "initial_position": [
         0.32,
         -0.14,
-        0.045
+        0.0735655
       ],
       "tag_to_center_offset": [
         0.0,
         0.0,
-        0.02
+        0.034809
       ],
       "tag": {
         "id": 1,
@@ -101,7 +168,7 @@
         "asset": "simulation_code/model/assets/apriltags/tag36_11_00001.png",
         "size_m": 0.024,
         "pos": [
-          -0.026,
+          -0.034809,
           0.0,
           0.0
         ],

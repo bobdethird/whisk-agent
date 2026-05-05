@@ -22,11 +22,11 @@ HORIZONTAL_WRIST_ROLL_DEGREES = -90.0
 
 STARTING_POSITION = {
     "shoulder_pan": 0.0,
-    "shoulder_lift": -45.0,
-    "elbow_flex": 90.0,
-    "wrist_flex": -45.0,
+    "shoulder_lift": -76.2,
+    "elbow_flex": 35.8,
+    "wrist_flex": 61.9,
     "wrist_roll": HORIZONTAL_WRIST_ROLL_DEGREES,
-    "gripper": 50.0,
+    "gripper": 55.6,
 }
 
 

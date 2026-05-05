@@ -26,8 +26,6 @@ from mujoco_sim.cup_scene_config import (
     DEFAULT_CUP_HALF_HEIGHT,
     DEFAULT_CUP_MASS,
     DEFAULT_CUP_RADIUS,
-    DEFAULT_CUP_RIM_HALF_HEIGHT,
-    DEFAULT_CUP_RIM_OVERHANG,
     DEFAULT_JAW_FRICTION,
     PLACE_TAG,
     PLACE_TAG_CAMERA_NAMES,
@@ -41,6 +39,7 @@ from mujoco_sim.path_planning import (
     CollisionPlanningContext,
     MotionPlannerConfig,
     PlanningError,
+    RuntimeCollisionGuard,
     is_arm_motion,
     plan_joint_path,
 )
@@ -57,6 +56,7 @@ SECOND_CUP_BODY_NAME = SECOND_CUP.body_name
 SECOND_CUP_FREEJOINT_NAME = SECOND_CUP.freejoint_name
 FIXED_JAW_BODY_NAME = "gripper"
 MOVING_JAW_BODY_NAME = "moving_jaw_so101_v1"
+WORK_TABLE_BODY_NAME = "work_table"
 DEFAULT_CUP_POSITION = PRIMARY_CUP.initial_position
 DEFAULT_SECOND_CUP_POSITION = SECOND_CUP.initial_position
 DEFAULT_PLACE_TAG_POSITION = PLACE_TAG.pos
@@ -87,8 +87,6 @@ class PickupConfig:
     second_cup_position: tuple[float, float, float] = DEFAULT_SECOND_CUP_POSITION
     cup_radius: float = DEFAULT_CUP_RADIUS
     cup_half_height: float = DEFAULT_CUP_HALF_HEIGHT
-    cup_rim_overhang: float = DEFAULT_CUP_RIM_OVERHANG
-    cup_rim_half_height: float = DEFAULT_CUP_RIM_HALF_HEIGHT
     cup_mass: float = DEFAULT_CUP_MASS
     cup_friction: tuple[float, float, float] = DEFAULT_CUP_FRICTION
     jaw_friction: tuple[float, float, float] = DEFAULT_JAW_FRICTION
@@ -132,8 +130,6 @@ class CupSpec:
     label: str
     body_name: str
     freejoint_name: str
-    side_geom_name: str
-    rim_geom_name: str
     visual_geom_name: str
     initial_position: tuple[float, float, float]
     tag_id: int
@@ -310,8 +306,6 @@ def cup_spec_from_scene(
         label=cup_scene.label,
         body_name=cup_scene.body_name,
         freejoint_name=cup_scene.freejoint_name,
-        side_geom_name=cup_scene.side_geom_name,
-        rim_geom_name=cup_scene.rim_geom_name,
         visual_geom_name=cup_scene.visual_geom_name,
         initial_position=initial_position,
         tag_id=tag_id,
@@ -401,27 +395,6 @@ def _scale_body_mass(model: mujoco.MjModel, body_id: int, target_mass: float) ->
     model.body_inertia[body_id] *= inertia_scale
 
 
-def _set_cup_size(model: mujoco.MjModel, cup: CupSpec, radius: float, half_height: float) -> None:
-    for geom_name, visual_offset in ((cup.side_geom_name, 0.0), (cup.visual_geom_name, 0.0005)):
-        geom_id = _require_id(model, mujoco.mjtObj.mjOBJ_GEOM, geom_name)
-        model.geom_size[geom_id, 0] = radius + visual_offset
-        model.geom_size[geom_id, 1] = half_height + visual_offset
-
-
-def _set_cup_rim(
-    model: mujoco.MjModel,
-    cup: CupSpec,
-    radius: float,
-    half_height: float,
-    overhang: float,
-    rim_half_height: float,
-) -> None:
-    rim_geom_id = _require_id(model, mujoco.mjtObj.mjOBJ_GEOM, cup.rim_geom_name)
-    model.geom_size[rim_geom_id, 0] = radius + overhang
-    model.geom_size[rim_geom_id, 1] = rim_half_height
-    model.geom_pos[rim_geom_id, 2] = half_height - rim_half_height
-
-
 def _set_actuator_force(model: mujoco.MjModel, actuator_name: str, force: float) -> None:
     actuator_id = _require_id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, actuator_name)
     model.actuator_forcerange[actuator_id] = [-force, force]
@@ -441,15 +414,8 @@ def configure_cup(env: SimEnv, config: PickupConfig, cup: CupSpec) -> ContactDia
     fixed_jaw_body_id = _require_id(env.model, mujoco.mjtObj.mjOBJ_BODY, FIXED_JAW_BODY_NAME)
     moving_jaw_body_id = _require_id(env.model, mujoco.mjtObj.mjOBJ_BODY, MOVING_JAW_BODY_NAME)
 
-    _set_cup_size(env.model, cup, config.cup_radius, config.cup_half_height)
-    _set_cup_rim(
-        env.model,
-        cup,
-        config.cup_radius,
-        config.cup_half_height,
-        config.cup_rim_overhang,
-        config.cup_rim_half_height,
-    )
+    # Mesh cup dimensions are fixed by the generated MJCF assets; radius and
+    # half-height remain planning parameters for approach and placement math.
     _set_freejoint_pose(env.model, env.data, cup.freejoint_name, cup.initial_position)
     _scale_body_mass(env.model, cup_body_id, config.cup_mass)
     _set_actuator_force(env.model, "gripper", config.gripper_force)
@@ -513,6 +479,60 @@ def _path_position_at(
     return _interpolate_position(path[index], path[index + 1], local_alpha)
 
 
+def _positions_close(
+    first: dict[str, float],
+    second: dict[str, float],
+    tolerance: float = 1e-3,
+) -> bool:
+    return all(abs(first[joint] - second[joint]) <= tolerance for joint in JOINT_ORDER)
+
+
+def _copy_mujoco_data(model: mujoco.MjModel, source: mujoco.MjData) -> mujoco.MjData:
+    data = mujoco.MjData(model)
+    data.qpos[:] = source.qpos
+    data.qvel[:] = source.qvel
+    data.ctrl[:] = source.ctrl
+    if data.act.size == source.act.size:
+        data.act[:] = source.act
+    mujoco.mj_forward(model, data)
+    return data
+
+
+def _shadow_validate_joint_path(
+    env: SimEnv,
+    path: list[dict[str, float]],
+    duration: float,
+    collision_context: CollisionPlanningContext | None,
+) -> bool:
+    if collision_context is None:
+        return True
+    shadow_data = _copy_mujoco_data(env.model, env.data)
+    guard = RuntimeCollisionGuard(env.model, shadow_data, collision_context)
+    steps = max(1, math.ceil(duration / env.model.opt.timestep))
+    for step_index in range(steps):
+        alpha = (step_index + 1) / steps
+        send_position_command(shadow_data, _path_position_at(path, alpha))
+        mujoco.mj_step(env.model, shadow_data)
+        violation = guard.violation(shadow_data)
+        if violation is not None:
+            print(f"motion rejected by shadow simulation: {violation}")
+            return False
+    return True
+
+
+def _shadow_validate_direct_motion(
+    env: SimEnv,
+    start_position: dict[str, float],
+    target_position: dict[str, float],
+    duration: float,
+    collision_context: CollisionPlanningContext | None,
+) -> bool:
+    if collision_context is None:
+        return True
+    path = [start_position, target_position]
+    return _shadow_validate_joint_path(env, path, duration, collision_context)
+
+
 def _step_once(
     env: SimEnv,
     diagnostics: ContactDiagnostics,
@@ -546,9 +566,13 @@ def command_joint_path(
     viewer: mujoco.viewer.Handle | None = None,
     realtime: bool = False,
     debug_overlay: ViewerDebugOverlay | None = None,
+    collision_context: CollisionPlanningContext | None = None,
 ) -> bool:
     if not path:
         raise ValueError("command_joint_path() requires at least one waypoint.")
+    if not _shadow_validate_joint_path(env, path, duration, collision_context):
+        return False
+    guard = RuntimeCollisionGuard(env.model, env.data, collision_context) if collision_context is not None else None
     steps = max(1, math.ceil(duration / env.model.opt.timestep))
     for step_index in range(steps):
         alpha = (step_index + 1) / steps
@@ -556,6 +580,11 @@ def command_joint_path(
         send_position_command(env.data, command)
         if not _step_once(env, diagnostics, viewer, realtime, debug_overlay):
             return False
+        if guard is not None:
+            violation = guard.violation(env.data)
+            if violation is not None:
+                print(f"planned motion aborted on disallowed contact: {violation}")
+                return False
 
     env.current_position = dict(path[-1])
     return True
@@ -573,6 +602,7 @@ def command_motion(
     collision_context: CollisionPlanningContext | None = None,
 ) -> bool:
     start_position = convert_to_dictionary(env.data.qpos.copy())
+    guard = RuntimeCollisionGuard(env.model, env.data, collision_context) if collision_context is not None else None
     if planner_config is not None and planner_config.planner != "direct" and is_arm_motion(start_position, target_position):
         try:
             path = plan_joint_path(env, target_position, planner_config, collision_context=collision_context)
@@ -581,9 +611,11 @@ def command_motion(
             return False
         if planner_config.debug:
             print(f"{planner_config.planner} planner produced {len(path)} waypoints")
-        return command_joint_path(env, path, duration, diagnostics, viewer, realtime, debug_overlay)
+        return command_joint_path(env, path, duration, diagnostics, viewer, realtime, debug_overlay, collision_context=collision_context)
 
     steps = max(1, math.ceil(duration / env.model.opt.timestep))
+    if not _shadow_validate_direct_motion(env, start_position, target_position, duration, collision_context):
+        return False
 
     for step_index in range(steps):
         alpha = (step_index + 1) / steps
@@ -591,6 +623,11 @@ def command_motion(
         send_position_command(env.data, command)
         if not _step_once(env, diagnostics, viewer, realtime, debug_overlay):
             return False
+        if guard is not None:
+            violation = guard.violation(env.data)
+            if violation is not None:
+                print(f"motion aborted on disallowed contact: {violation}")
+                return False
 
     env.current_position = dict(target_position)
     return True
@@ -604,12 +641,22 @@ def hold_command(
     viewer: mujoco.viewer.Handle | None = None,
     realtime: bool = False,
     debug_overlay: ViewerDebugOverlay | None = None,
+    collision_context: CollisionPlanningContext | None = None,
 ) -> bool:
+    start_position = convert_to_dictionary(env.data.qpos.copy())
+    if not _shadow_validate_direct_motion(env, start_position, target_position, duration, collision_context):
+        return False
+    guard = RuntimeCollisionGuard(env.model, env.data, collision_context) if collision_context is not None else None
     steps = max(1, math.ceil(duration / env.model.opt.timestep))
     for _ in range(steps):
         send_position_command(env.data, target_position)
         if not _step_once(env, diagnostics, viewer, realtime, debug_overlay):
             return False
+        if guard is not None:
+            violation = guard.violation(env.data)
+            if violation is not None:
+                print(f"hold aborted on disallowed contact: {violation}")
+                return False
     env.current_position = dict(target_position)
     return True
 
@@ -662,11 +709,14 @@ def planner_context_for_cup(
     diagnostics: ContactDiagnostics,
     cup: CupSpec,
     attach_cup: bool = False,
+    allow_gripper_cup_contact: bool = False,
+    allowed_support_body_names: tuple[str, ...] = (),
 ) -> CollisionPlanningContext:
     return CollisionPlanningContext(
-        allowed_gripper_contact_geom_ids=frozenset(diagnostics.cup_geom_ids),
+        allowed_gripper_contact_geom_ids=frozenset(diagnostics.cup_geom_ids) if allow_gripper_cup_contact else frozenset(),
         attached_body_name=cup.body_name if attach_cup else None,
         attached_freejoint_name=cup.freejoint_name if attach_cup else None,
+        allowed_support_body_names=allowed_support_body_names,
     )
 
 
@@ -936,8 +986,8 @@ def target_points_from_cup_center(
         raise ValueError("Cup center must not be directly above the robot base.")
     radial = cup_xy / radial_norm
     left = np.array([-radial[1], radial[0]], dtype=float)
-    waypoint_offset = config.cup_radius + config.first_waypoint_clearance
-    pregrasp_xy = cup_xy + radial * waypoint_offset + left * waypoint_offset
+    lateral_offset = config.cup_radius + config.lateral_grasp_offset
+    pregrasp_xy = cup_xy + radial * config.side_grasp_offset + left * lateral_offset
     blue_pregrasp = np.array([pregrasp_xy[0], pregrasp_xy[1], green_center[2]], dtype=float)
     return CupTargetPoints(green_center=green_center, blue_pregrasp=blue_pregrasp, tag_estimate=tag_estimate)
 
@@ -1144,7 +1194,7 @@ def execute_pickup(
         realtime,
         debug_overlay,
         planner_config=config.motion_planner,
-        collision_context=planner_context_for_cup(diagnostics, cup, attach_cup=False),
+        collision_context=planner_context_for_cup(diagnostics, cup, attach_cup=False, allow_gripper_cup_contact=True),
     ):
         return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
 
@@ -1157,6 +1207,7 @@ def execute_pickup(
         viewer,
         realtime,
         debug_overlay,
+        collision_context=planner_context_for_cup(diagnostics, cup, allow_gripper_cup_contact=True),
     ):
         return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
 
@@ -1170,6 +1221,7 @@ def execute_pickup(
         viewer,
         realtime,
         debug_overlay,
+        collision_context=planner_context_for_cup(diagnostics, cup, allow_gripper_cup_contact=True),
     ):
         return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
     if not hold_command(
@@ -1180,6 +1232,7 @@ def execute_pickup(
         viewer,
         realtime,
         debug_overlay,
+        collision_context=planner_context_for_cup(diagnostics, cup, allow_gripper_cup_contact=True),
     ):
         return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
 
@@ -1193,7 +1246,7 @@ def execute_pickup(
         realtime,
         debug_overlay,
         planner_config=config.motion_planner,
-        collision_context=planner_context_for_cup(diagnostics, cup, attach_cup=True),
+        collision_context=planner_context_for_cup(diagnostics, cup, attach_cup=True, allow_gripper_cup_contact=True),
     ):
         return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
     hold_command(
@@ -1204,6 +1257,7 @@ def execute_pickup(
         viewer,
         realtime,
         debug_overlay,
+        collision_context=planner_context_for_cup(diagnostics, cup, attach_cup=True, allow_gripper_cup_contact=True),
     )
     return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
 
@@ -1215,6 +1269,7 @@ def execute_place(
     pickup_result: PickupResult,
     target_center: np.ndarray,
     cup: CupSpec | None = None,
+    allowed_support_body_names: tuple[str, ...] = (WORK_TABLE_BODY_NAME,),
     viewer: mujoco.viewer.Handle | None = None,
     realtime: bool = False,
 ) -> PlacementResult:
@@ -1247,9 +1302,9 @@ def execute_place(
         realtime,
         debug_overlay,
         planner_config=config.motion_planner,
-        collision_context=planner_context_for_cup(diagnostics, cup, attach_cup=True),
+        collision_context=planner_context_for_cup(diagnostics, cup, attach_cup=True, allow_gripper_cup_contact=True),
     ):
-        return _placement_result(env, config, diagnostics, target_center)
+        return _placement_result(env, config, diagnostics, target_center, success_override=False)
 
     release_position = solve_target(env, release_xyz, CLOSED_GRIPPER, config.ik_tool_point)
     if not command_motion(
@@ -1260,8 +1315,15 @@ def execute_place(
         viewer,
         realtime,
         debug_overlay,
+        collision_context=planner_context_for_cup(
+            diagnostics,
+            cup,
+            attach_cup=True,
+            allow_gripper_cup_contact=True,
+            allowed_support_body_names=allowed_support_body_names,
+        ),
     ):
-        return _placement_result(env, config, diagnostics, target_center)
+        return _placement_result(env, config, diagnostics, target_center, success_override=False)
 
     open_position = dict(release_position)
     open_position["gripper"] = OPEN_GRIPPER
@@ -1273,9 +1335,16 @@ def execute_place(
         viewer,
         realtime,
         debug_overlay,
+        collision_context=planner_context_for_cup(
+            diagnostics,
+            cup,
+            attach_cup=True,
+            allow_gripper_cup_contact=True,
+            allowed_support_body_names=allowed_support_body_names,
+        ),
     ):
-        return _placement_result(env, config, diagnostics, target_center)
-    hold_command(
+        return _placement_result(env, config, diagnostics, target_center, success_override=False)
+    hold_until_gripper_cup_contacts_clear(
         env,
         open_position,
         config.release_contact_settle_duration,
@@ -1285,7 +1354,23 @@ def execute_place(
         debug_overlay,
     )
 
-    retreat_xyz = release_xyz + np.array([0.0, 0.0, config.place_approach_height], dtype=float)
+    retreat_base_xyz = release_xyz.copy()
+    if config.release_clearance > 0.0:
+        retreat_base_xyz[:2] = release_xyz[:2] + retreat_direction * config.release_clearance
+        release_clear_position = solve_target(env, retreat_base_xyz, OPEN_GRIPPER, config.ik_tool_point)
+        if not command_motion(
+            env,
+            release_clear_position,
+            config.release_contact_settle_duration,
+            diagnostics,
+            viewer,
+            realtime,
+            debug_overlay,
+            collision_context=planner_context_for_cup(diagnostics, cup, allow_gripper_cup_contact=True),
+        ):
+            return _placement_result(env, config, diagnostics, target_center, success_override=False)
+
+    retreat_xyz = retreat_base_xyz + np.array([0.0, 0.0, config.place_approach_height], dtype=float)
     retreat_position = solve_target(env, retreat_xyz, OPEN_GRIPPER, config.ik_tool_point)
     if not command_motion(
         env,
@@ -1295,9 +1380,10 @@ def execute_place(
         viewer,
         realtime,
         debug_overlay,
+        collision_context=planner_context_for_cup(diagnostics, cup, allow_gripper_cup_contact=True),
     ):
-        return _placement_result(env, config, diagnostics, target_center)
-    if not hold_until_gripper_cup_contacts_clear(
+        return _placement_result(env, config, diagnostics, target_center, success_override=False)
+    hold_until_gripper_cup_contacts_clear(
         env,
         retreat_position,
         config.release_contact_settle_duration,
@@ -1305,28 +1391,30 @@ def execute_place(
         viewer,
         realtime,
         debug_overlay,
-    ):
-        return _placement_result(env, config, diagnostics, target_center)
+    )
 
     final_retreat_position = retreat_position
     lateral_retreat_distance = max(config.release_clearance, config.place_lateral_retreat)
     if lateral_retreat_distance > 0.0:
         elevated_lateral_retreat_xyz = retreat_xyz.copy()
         elevated_lateral_retreat_xyz[:2] = release_xyz[:2] + retreat_direction * lateral_retreat_distance
-        final_retreat_position = solve_target(env, elevated_lateral_retreat_xyz, OPEN_GRIPPER, config.ik_tool_point)
-        command_motion(
+        candidate_retreat_position = solve_target(env, elevated_lateral_retreat_xyz, OPEN_GRIPPER, config.ik_tool_point)
+        if command_motion(
             env,
-            final_retreat_position,
+            candidate_retreat_position,
             config.descend_duration,
             diagnostics,
             viewer,
             realtime,
             debug_overlay,
             planner_config=config.motion_planner,
-            collision_context=planner_context_for_cup(diagnostics, cup, attach_cup=False),
-        )
+            collision_context=planner_context_for_cup(diagnostics, cup, attach_cup=False, allow_gripper_cup_contact=False),
+        ):
+            final_retreat_position = candidate_retreat_position
+        elif not _positions_close(env.current_position, retreat_position):
+            return _placement_result(env, config, diagnostics, target_center, success_override=False)
 
-    hold_command(
+    if not hold_command(
         env,
         final_retreat_position,
         config.final_hold_duration,
@@ -1334,7 +1422,9 @@ def execute_place(
         viewer,
         realtime,
         debug_overlay,
-    )
+        collision_context=planner_context_for_cup(diagnostics, cup, allow_gripper_cup_contact=False),
+    ):
+        return _placement_result(env, config, diagnostics, target_center, success_override=False)
     return _placement_result(env, config, diagnostics, target_center)
 
 
@@ -1364,12 +1454,14 @@ def _placement_result(
     config: PickupConfig,
     diagnostics: ContactDiagnostics,
     target_center: np.ndarray,
+    success_override: bool | None = None,
 ) -> PlacementResult:
     final_center = env.data.xpos[diagnostics.cup_body_id].copy()
     xy_error = float(np.linalg.norm(final_center[:2] - target_center[:2]))
     z_error = float(abs(final_center[2] - target_center[2]))
+    geometric_success = xy_error <= config.place_success_xy_tolerance and z_error <= config.place_success_z_tolerance
     return PlacementResult(
-        success=xy_error <= config.place_success_xy_tolerance and z_error <= config.place_success_z_tolerance,
+        success=geometric_success if success_override is None else success_override,
         target_center=target_center.copy(),
         final_center=final_center,
         xy_error=xy_error,
@@ -1461,6 +1553,7 @@ def execute_pick_place_stack_sequence(
         first_pickup,
         ground_target_center,
         first_cup,
+        allowed_support_body_names=(WORK_TABLE_BODY_NAME,),
         viewer=viewer,
         realtime=realtime,
     )
@@ -1487,6 +1580,7 @@ def execute_pick_place_stack_sequence(
         second_pickup,
         stack_target_center,
         second_cup,
+        allowed_support_body_names=(first_cup.body_name,),
         viewer=viewer,
         realtime=realtime,
     )
@@ -1662,7 +1756,12 @@ def parse_args() -> argparse.Namespace:
         help="Run the original single pickup or the pick/place/stack sequence.",
     )
     parser.add_argument("--sweep", action="store_true", help="Run a headless jaw-friction/cup-mass sweep.")
-    parser.add_argument("--cup-radius", type=float, default=DEFAULT_CUP_RADIUS, help="Cup side collision radius in meters.")
+    parser.add_argument(
+        "--cup-radius",
+        type=float,
+        default=DEFAULT_CUP_RADIUS,
+        help="Planning radius for cup approach waypoints; mesh scale is fixed by scene assets.",
+    )
     parser.add_argument("--cup-mass", type=float, default=DEFAULT_CUP_MASS, help="Cup mass in kg.")
     parser.add_argument("--gripper-force", type=float, default=1.5, help="Symmetric gripper actuator force range.")
     parser.add_argument(
@@ -1731,7 +1830,7 @@ def parse_args() -> argparse.Namespace:
         "--first-waypoint-clearance",
         type=float,
         default=DEFAULT_FIRST_WAYPOINT_CLEARANCE,
-        help="Meters beyond the cup radius to place the first low waypoint forward and left.",
+        help="Legacy clearance value retained for compatibility; side and lateral grasp offsets define the low waypoint.",
     )
     parser.add_argument("--grasp-height", type=float, default=0.070, help="World z target for the claw center.")
     parser.add_argument("--lift-height", type=float, default=0.09, help="Meters to lift above the grasp target.")

@@ -8,3 +8,11 @@ lerobot[kinematics]
 
 # AprilTag detection for camera demos and pose estimation.
 pupil-apriltags
+
+# OpenAI model and agent orchestration dependencies.
+openai
+openai-agents
+python-dotenv
+
+# Gemini Robotics-ER planning dependencies.
+google-genai

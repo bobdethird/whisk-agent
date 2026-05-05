@@ -1,0 +1,149 @@
+{
+  "attempt_index": 1,
+  "evaluation": {
+    "failure_reasons": [
+      "second cup lift delta -inf m below threshold 0.0350 m",
+      "second cup is not stacked on the first cup within tolerance (xy_error=0.1268 m, z_error=0.1481 m)"
+    ],
+    "first_contact_diagnostics": {
+      "both_jaw_contact_steps": 719,
+      "contact_pairs_seen": [
+        {
+          "cup_geom": "cup_collision_00",
+          "other_geom": "work_table_top"
+        },
+        {
+          "cup_geom": "cup_collision_02",
+          "other_geom": "fixed_jaw_box3"
+        },
+        {
+          "cup_geom": "cup_collision_02",
+          "other_geom": "fixed_jaw_box4"
+        },
+        {
+          "cup_geom": "cup_collision_02",
+          "other_geom": "fixed_jaw_grip_pad"
+        },
+        {
+          "cup_geom": "cup_collision_02",
+          "other_geom": "fixed_jaw_sph_tip1"
+        },
+        {
+          "cup_geom": "cup_collision_02",
+          "other_geom": "fixed_jaw_sph_tip2"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "other_geom": "fixed_jaw_box3"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "other_geom": "fixed_jaw_box4"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "other_geom": "fixed_jaw_grip_pad"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "other_geom": "fixed_jaw_sph_tip1"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "other_geom": "fixed_jaw_sph_tip2"
+        },
+        {
+          "cup_geom": "cup_collision_03",
+          "other_geom": "fixed_jaw_sph_tip3"
+        },
+        {
+          "cup_geom": "cup_collision_04",
+          "other_geom": "camera_box2"
+        },
+        {
+          "cup_geom": "cup_collision_07",
+          "other_geom": "moving_jaw_box2"
+        },
+        {
+          "cup_geom": "cup_collision_07",
+          "other_geom": "moving_jaw_grip_pad"
+        },
+        {
+          "cup_geom": "cup_collision_07",
+          "other_geom": "moving_jaw_sph_tip2"
+        },
+        {
+          "cup_geom": "cup_collision_08",
+          "other_geom": "camera_box2"
+        },
+        {
+          "cup_geom": "cup_collision_08",
+          "other_geom": "moving_jaw_grip_pad"
+        }
+      ],
+      "cup_contact_steps": 1299,
+      "cup_label": "first cup",
+      "current_gripper_cup_contacts": [],
+      "fixed_contact_steps": 720,
+      "max_contacts": 15,
+      "max_cup_z_m": 0.17796,
+      "moving_contact_steps": 727,
+      "steps": 1300
+    },
+    "first_cup_label": "first cup",
+    "first_final_center_m": [
+      0.43205,
+      -0.08069,
+      0.0745
+    ],
+    "first_lift_delta_m": 0.104398,
+    "first_max_cup_z_m": 0.17796,
+    "first_target_center_m": [
+      0.44,
+      -0.08,
+      0.07357
+    ],
+    "first_xy_error_m": 0.007975,
+    "first_z_error_m": 0.000932,
+    "gripper_open": true,
+    "gripper_position": 50.09559,
+    "held_cup_label": null,
+    "lift_delta_m": -Infinity,
+    "released": true,
+    "second_contact_diagnostics": {
+      "both_jaw_contact_steps": 0,
+      "contact_pairs_seen": [],
+      "cup_contact_steps": 0,
+      "cup_label": "second cup",
+      "current_gripper_cup_contacts": [],
+      "fixed_contact_steps": 0,
+      "max_contacts": 0,
+      "max_cup_z_m": -Infinity,
+      "moving_contact_steps": 0,
+      "steps": 0
+    },
+    "second_cup_label": "second cup",
+    "second_final_center_m": [
+      0.32001,
+      -0.14006,
+      0.0735
+    ],
+    "second_lift_delta_m": -Infinity,
+    "second_max_cup_z_m": -Infinity,
+    "second_target_center_m": [
+      0.43205,
+      -0.08069,
+      0.22163
+    ],
+    "stack_xy_error_m": 0.126805,
+    "stack_z_error_m": 0.14813,
+    "success": false,
+    "task": "cup_stack",
+    "xy_error_m": 0.126805,
+    "z_error_m": 0.14813
+  },
+  "guidance": "Follow the deterministic cup stacking policy unless recovery is needed: move_arm(apriltag_id=6,target='approach'), move_arm(apriltag_id=6,target='grasp'), close_gripper(), move_arm(apriltag_id=6,target='lift'), move_arm(apriltag_id=0,target='place_above'), move_arm(apriltag_id=0,target='place'), open_gripper(), move_arm(apriltag_id=1,target='approach'), move_arm(apriltag_id=1,target='grasp'), close_gripper(), move_arm(apriltag_id=1,target='lift'), move_arm(apriltag_id=6,target='place_above'), move_arm(apriltag_id=6,target='place'), open_gripper(). Use raw XYZ only for recovery. Return a complete validated action plan.",
+  "plan_only": false,
+  "step_count": 1,
+  "success": false
+}

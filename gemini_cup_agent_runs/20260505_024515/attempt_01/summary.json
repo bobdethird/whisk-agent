@@ -1,0 +1,46 @@
+{
+  "attempt_index": 1,
+  "evaluation": {
+    "contact_diagnostics": {
+      "both_jaw_contact_steps": 0,
+      "contact_pairs_seen": [],
+      "cup_contact_steps": 0,
+      "cup_label": "first cup",
+      "current_gripper_cup_contacts": [],
+      "fixed_contact_steps": 0,
+      "max_contacts": 0,
+      "max_cup_z_m": -Infinity,
+      "moving_contact_steps": 0,
+      "steps": 0
+    },
+    "failure_reasons": [
+      "cup lift delta -inf m below threshold 0.0350 m",
+      "cup final pose outside placement tolerance (xy_error=0.1442 m, z_error=0.0000 m)"
+    ],
+    "final_center_m": [
+      0.32,
+      0.0,
+      0.07357
+    ],
+    "gripper_open": true,
+    "gripper_position": 55.6,
+    "held_cup_label": null,
+    "initial_cup_z_m": 0.07357,
+    "lift_delta_m": -Infinity,
+    "max_cup_z_m": -Infinity,
+    "primary_cup_label": "first cup",
+    "released": true,
+    "success": false,
+    "target_center_m": [
+      0.44,
+      -0.08,
+      0.07357
+    ],
+    "xy_error_m": 0.144222,
+    "z_error_m": 0.0
+  },
+  "guidance": "Follow the deterministic cup pickup/place policy unless recovery is needed: move_arm(apriltag_id=6,target='approach'), move_arm(apriltag_id=6,target='grasp'), close_gripper(), move_arm(apriltag_id=6,target='lift'), move_arm(apriltag_id=0,target='place_above'), move_arm(apriltag_id=0,target='place'), open_gripper(). Use raw XYZ only for recovery. Return a complete validated action plan.",
+  "plan_only": true,
+  "step_count": 1,
+  "success": false
+}
