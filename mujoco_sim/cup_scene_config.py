@@ -31,6 +31,13 @@ DEFAULT_CUP_MASS = 0.025
 DEFAULT_CUP_FRICTION = (1.0, 0.02, 0.002)
 DEFAULT_JAW_FRICTION = (1.2, 0.005, 0.0005)
 
+DEFAULT_SPOON_MASS = 0.020
+DEFAULT_SPOON_FRICTION = (0.9, 0.02, 0.002)
+DEFAULT_SPOON_POSITION = (0.26, 0.12, 0.004)
+DEFAULT_SPOON_HANDLE_LENGTH = 0.14
+DEFAULT_SPOON_HANDLE_RADIUS = 0.004
+DEFAULT_SPOON_BOWL_RADII = (0.018, 0.013, 0.004)
+
 CUP_TAG_SIZE = 0.024
 CUP_TAG_MOUNT_DISTANCE_FROM_CENTER = 0.026
 CUP_TAG_TO_CUP_CENTER_OFFSET = (0.0, 0.0, 0.020)
@@ -72,6 +79,23 @@ class CupObjectSpec:
         return f"{self.body_name}_site"
 
 
+@dataclass(frozen=True)
+class SpoonObjectSpec:
+    label: str
+    body_name: str
+    initial_position: tuple[float, float, float]
+    rgba: tuple[float, float, float, float]
+    mass: float = DEFAULT_SPOON_MASS
+    friction: tuple[float, float, float] = DEFAULT_SPOON_FRICTION
+    handle_length: float = DEFAULT_SPOON_HANDLE_LENGTH
+    handle_radius: float = DEFAULT_SPOON_HANDLE_RADIUS
+    bowl_radii: tuple[float, float, float] = DEFAULT_SPOON_BOWL_RADII
+
+    @property
+    def site_name(self) -> str:
+        return f"{self.body_name}_site"
+
+
 PLACE_TAG = AprilTagSpec(
     tag_id=0,
     size_m=CUP_TAG_SIZE,
@@ -105,6 +129,13 @@ SECOND_CUP = CupObjectSpec(
         name_prefix="second_cup_",
     ),
     rgba=(0.55, 0.95, 0.65, 0.35),
+)
+
+SPOON = SpoonObjectSpec(
+    label="spoon",
+    body_name="spoon",
+    initial_position=DEFAULT_SPOON_POSITION,
+    rgba=(0.86, 0.86, 0.90, 1.0),
 )
 
 CUPS = (PRIMARY_CUP, SECOND_CUP)

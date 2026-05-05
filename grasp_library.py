@@ -442,7 +442,74 @@ PLACEMENT_PAD = TaggedObject(
 )
 
 
-OBJECTS: tuple[TaggedObject, ...] = (CUP, THREE_CUP_STACK, PLACEMENT_PAD)
+# Spoon (`scene_spoon.xml`): handle is a thin capsule along object +x at z=0;
+# tag 10 sits flat on top of the handle (mesh body axes match spoon body axes,
+# so R_body_in_object = I and rot_in_object = TAG_BODY_TO_LIBRARY).
+#
+# Top-down grasp: the SO-101 moving jaw rotates about claw_y, so the closing
+# arc lies in the claw_x-claw_z plane. To clamp a thin horizontal handle, the
+# handle's long axis must align with claw_y so the arc sweeps perpendicular to
+# it. With approach claw_x = -obj_z (down) and claw_y = +obj_x (along handle),
+# claw_z = claw_x x claw_y = -obj_y.
+_TAG10_ROT_IN_SPOON = TAG_BODY_TO_LIBRARY  # tag mesh axes == spoon body axes
+
+# Grasp 0 — top-down pinch: claw_x = -obj_z (down), claw_y = +obj_x (along
+# handle), claw_z = -obj_y. Moving-jaw arc sweeps perpendicular to handle.
+_SPOON_TOPDOWN_GRASP_ROT = np.array(
+    [
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, -1.0],
+        [-1.0, 0.0, 0.0],
+    ],
+    dtype=float,
+)
+
+# Grasp 1 — scooping grip: approach at 45° between top-down and side (+y).
+# claw_x = (0, 1/√2, -1/√2), claw_y = +obj_x (handle), claw_z = (0, -1/√2, -1/√2).
+# Achievable on the 5-DoF arm; spoon is tilted ~45° when lifted — natural
+# orientation for holding a spoon to eat / scoop.
+_S = float(np.sqrt(0.5))
+_SPOON_SCOOP_GRASP_ROT = np.array(
+    [
+        [0.0, 1.0, 0.0],
+        [_S, 0.0, -_S],
+        [-_S, 0.0, -_S],
+    ],
+    dtype=float,
+)
+
+
+SPOON = TaggedObject(
+    name="spoon",
+    anchors=(
+        TagAnchor(
+            tag_id=10,
+            size_m=0.024,
+            pos_in_object=np.array([-0.020, 0.0, 0.020]),
+            rot_in_object=_TAG10_ROT_IN_SPOON,
+        ),
+    ),
+    grasps=(
+        GraspPose(
+            pos_in_object=np.array([-0.015, 0.0, 0.009]),
+            rot_in_object=_SPOON_TOPDOWN_GRASP_ROT,
+            pregrasp_back_off_m=0.06,
+            gripper_open=50.0,
+            gripper_close=-15.0,
+        ),
+        GraspPose(
+            # Same handle point; approach from +y so bowl faces forward after lift.
+            pos_in_object=np.array([-0.015, 0.0, 0.009]),
+            rot_in_object=_SPOON_SCOOP_GRASP_ROT,
+            pregrasp_back_off_m=0.06,
+            gripper_open=50.0,
+            gripper_close=-15.0,
+        ),
+    ),
+)
+
+
+OBJECTS: tuple[TaggedObject, ...] = (CUP, THREE_CUP_STACK, PLACEMENT_PAD, SPOON)
 
 
 def _build_tag_index() -> dict[int, tuple[TaggedObject, TagAnchor]]:
