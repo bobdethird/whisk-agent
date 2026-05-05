@@ -1,0 +1,131 @@
+<mujoco model="matcha_demo_scene">
+    <include file="so101.xml" />
+
+    <visual>
+        <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0" />
+        <rgba haze="0.15 0.25 0.35 1" />
+        <global azimuth="160" elevation="-20" offwidth="2560" offheight="1920" />
+    </visual>
+
+    <asset>
+        <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072" />
+        <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.18 0.19 0.20" rgb2="0.12 0.13 0.14" markrgb="0.35 0.35 0.35" width="300" height="300" />
+        <texture type="2d" name="work_table_top_texture" builtin="checker" mark="edge" rgb1="0.50 0.32 0.18" rgb2="0.42 0.26 0.14" markrgb="0.62 0.45 0.28" width="512" height="512" />
+        <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.04" specular="0.05" shininess="0.05" />
+        <material name="work_table_top_material" texture="work_table_top_texture" rgba="0.55 0.36 0.2 1" texuniform="true" texrepeat="3 2" reflectance="0" specular="0.08" shininess="0.08" />
+        <material name="work_table_leg_material" rgba="0.36 0.22 0.12 1" reflectance="0" specular="0.05" shininess="0.05" />
+
+        <mesh name="matcha_glass_cup_mesh" file="../assets/nvidia_kitchen/objects_lightwheel/glass_cup/GlassCup025/visual/GlassCup025.obj" scale="0.8 0.8 0.8" />
+        <texture name="matcha_glass_cup_texture" type="2d" file="../assets/nvidia_kitchen/objects_lightwheel/glass_cup/GlassCup025/visual/T_BC001.png" />
+        <material name="matcha_glass_cup_material" texture="matcha_glass_cup_texture" rgba="1 1 1 0.35" specular="0.25" shininess="0.5" />
+
+        <mesh name="matcha_ice_cube_mesh" file="../assets/nvidia_kitchen/objects_lightwheel/ice_cube/IceCube001/visual/IceCube001.obj" scale="0.45 0.45 0.45" />
+        <texture name="matcha_ice_cube_texture" type="2d" file="../assets/nvidia_kitchen/objects_lightwheel/ice_cube/IceCube001/visual/T_BC001.png" />
+        <material name="matcha_ice_cube_material" texture="matcha_ice_cube_texture" rgba="0.72 0.92 1 0.72" specular="0.6" shininess="0.2" />
+
+        <mesh name="matcha_whisk_mesh" file="../assets/nvidia_kitchen/objects_lightwheel/whisk/Whisk003/visual/Whisk003.obj" scale="0.65 0.65 0.65" />
+        <mesh name="matcha_whisk_prop_mesh" file="../assets/nvidia_kitchen/objects_lightwheel/whisk/Whisk003/visual/Prop.obj" scale="0.65 0.65 0.65" />
+        <texture name="matcha_whisk_texture" type="2d" file="../assets/nvidia_kitchen/objects_lightwheel/whisk/Whisk003/visual/T_BC001.png" />
+        <material name="matcha_whisk_material" texture="matcha_whisk_texture" rgba="1 1 1 1" specular="0.35" shininess="0.45" />
+        <material name="matcha_tea_material" rgba="0.28 0.48 0.18 0.82" specular="0.05" shininess="0.1" />
+    </asset>
+
+    <worldbody>
+        <light pos="0 0 3.5" dir="0 0 -1" directional="true" />
+        <light pos="0.15 -0.45 0.75" dir="0.1 0.35 -1" directional="true" diffuse="0.45 0.4 0.35" />
+        <geom name="floor" size="0 0 0.05" pos="0 0 -0.45" type="plane" material="groundplane" />
+
+        <body name="work_table">
+            <geom name="work_table_top" type="box" pos="0.22 0 -0.025" size="0.36 0.26 0.025" material="work_table_top_material" friction="1.3 0.01 0.001" />
+            <geom name="work_table_leg_0" type="box" pos="-0.095 -0.215 -0.25" size="0.018 0.018 0.2" material="work_table_leg_material" friction="1.0 0.01 0.001" />
+            <geom name="work_table_leg_1" type="box" pos="-0.095 0.215 -0.25" size="0.018 0.018 0.2" material="work_table_leg_material" friction="1.0 0.01 0.001" />
+            <geom name="work_table_leg_2" type="box" pos="0.535 -0.215 -0.25" size="0.018 0.018 0.2" material="work_table_leg_material" friction="1.0 0.01 0.001" />
+            <geom name="work_table_leg_3" type="box" pos="0.535 0.215 -0.25" size="0.018 0.018 0.2" material="work_table_leg_material" friction="1.0 0.01 0.001" />
+        </body>
+
+        <body name="main_cup" pos="0.32 0 0.045">
+            <geom name="main_cup_visual" type="mesh" mesh="matcha_glass_cup_mesh" material="matcha_glass_cup_material" contype="0" conaffinity="0" density="0" />
+            <!-- Hollow cup collision: a thin floor disk + 12 box walls forming a dodecagonal tube so the whisk can actually descend INTO the cup. -->
+            <!-- Inner apothem 0.024 m (interior radius), outer 0.028 m, walls 4 mm thick, height 0.090 m (world Z 0.000 to 0.090). -->
+            <geom name="main_cup_floor" type="cylinder" size="0.024 0.0025" pos="0 0 -0.0425" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.75 1.0 0.18" />
+            <geom name="main_cup_wall_0" type="box" size="0.002 0.008 0.045" pos="0.026 0 0" euler="0 0 0" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.75 1.0 0.14" />
+            <geom name="main_cup_wall_1" type="box" size="0.002 0.008 0.045" pos="0.022517 0.013 0" euler="0 0 0.5236" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.75 1.0 0.14" />
+            <geom name="main_cup_wall_2" type="box" size="0.002 0.008 0.045" pos="0.013 0.022517 0" euler="0 0 1.0472" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.75 1.0 0.14" />
+            <geom name="main_cup_wall_3" type="box" size="0.002 0.008 0.045" pos="0 0.026 0" euler="0 0 1.5708" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.75 1.0 0.14" />
+            <geom name="main_cup_wall_4" type="box" size="0.002 0.008 0.045" pos="-0.013 0.022517 0" euler="0 0 2.0944" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.75 1.0 0.14" />
+            <geom name="main_cup_wall_5" type="box" size="0.002 0.008 0.045" pos="-0.022517 0.013 0" euler="0 0 2.6180" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.75 1.0 0.14" />
+            <geom name="main_cup_wall_6" type="box" size="0.002 0.008 0.045" pos="-0.026 0 0" euler="0 0 3.1416" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.75 1.0 0.14" />
+            <geom name="main_cup_wall_7" type="box" size="0.002 0.008 0.045" pos="-0.022517 -0.013 0" euler="0 0 3.6652" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.75 1.0 0.14" />
+            <geom name="main_cup_wall_8" type="box" size="0.002 0.008 0.045" pos="-0.013 -0.022517 0" euler="0 0 4.1888" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.75 1.0 0.14" />
+            <geom name="main_cup_wall_9" type="box" size="0.002 0.008 0.045" pos="0 -0.026 0" euler="0 0 4.7124" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.75 1.0 0.14" />
+            <geom name="main_cup_wall_10" type="box" size="0.002 0.008 0.045" pos="0.013 -0.022517 0" euler="0 0 5.2360" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.75 1.0 0.14" />
+            <geom name="main_cup_wall_11" type="box" size="0.002 0.008 0.045" pos="0.022517 -0.013 0" euler="0 0 5.7596" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.75 1.0 0.14" />
+            <geom name="main_matcha_surface" type="cylinder" size="0.022 0.0015" pos="0 0 -0.020" material="matcha_tea_material" contype="0" conaffinity="0" density="0" />
+            <site name="main_cup_site" pos="0 0 0" size="0.006" rgba="0 1 0 0.5" />
+        </body>
+
+        <body name="ice_cup" pos="0.42 -0.11 0.045">
+            <geom name="ice_cup_visual" type="mesh" mesh="matcha_glass_cup_mesh" material="matcha_glass_cup_material" contype="0" conaffinity="0" density="0" />
+            <geom name="ice_cup_collision" type="cylinder" size="0.024 0.045" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.75 1.0 0.16" />
+            <geom name="ice_cup_rim_proxy" type="cylinder" size="0.031 0.004" pos="0 0 0.041" density="0" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.75 1.0 0.12" />
+        </body>
+
+        <body name="ice_cube_1" pos="0.410 -0.112 0.088" euler="0.25 0.1 0.4">
+            <geom name="ice_cube_1_visual" type="mesh" mesh="matcha_ice_cube_mesh" material="matcha_ice_cube_material" contype="0" conaffinity="0" density="0" />
+            <geom name="ice_cube_1_proxy" type="box" size="0.009 0.009 0.009" rgba="0.7 0.95 1 0.25" contype="0" conaffinity="0" density="0" />
+        </body>
+        <body name="ice_cube_2" pos="0.430 -0.103 0.088" euler="-0.2 0.35 -0.25">
+            <geom name="ice_cube_2_visual" type="mesh" mesh="matcha_ice_cube_mesh" material="matcha_ice_cube_material" contype="0" conaffinity="0" density="0" />
+            <geom name="ice_cube_2_proxy" type="box" size="0.009 0.009 0.009" rgba="0.7 0.95 1 0.25" contype="0" conaffinity="0" density="0" />
+        </body>
+        <body name="ice_cube_3" pos="0.421 -0.122 0.105" euler="0.1 -0.4 0.2">
+            <geom name="ice_cube_3_visual" type="mesh" mesh="matcha_ice_cube_mesh" material="matcha_ice_cube_material" contype="0" conaffinity="0" density="0" />
+            <geom name="ice_cube_3_proxy" type="box" size="0.009 0.009 0.009" rgba="0.7 0.95 1 0.25" contype="0" conaffinity="0" density="0" />
+        </body>
+
+        <!-- Whisk stands vertically with the wide head as a base. Head bottom at world z = 0
+             (table top), so body z = 0.077 + 0.005 (head half-height) = 0.082. Body local +Y
+             maps to world -Z (down) because of the quat, so the head proxy at body +Y sits below
+             the body center in world. -->
+        <body name="matcha_whisk" pos="0.25 0.12 0.077" quat="0.7071068 -0.7071068 0 0">
+            <freejoint name="matcha_whisk_freejoint" />
+            <geom name="matcha_whisk_visual" type="mesh" mesh="matcha_whisk_mesh" material="matcha_whisk_material" contype="0" conaffinity="0" density="0" />
+            <geom name="matcha_whisk_prop_visual" type="mesh" mesh="matcha_whisk_prop_mesh" material="matcha_whisk_material" contype="0" conaffinity="0" density="0" />
+            <!-- Simplified manipulation proxy: a short capsule (0.072 m half-length) so the handle
+                 ends EXACTLY at the head's body-Y position, eliminating geometry that would poke
+                 through the table when the whisk stands head-down. -->
+            <geom name="matcha_whisk_handle_proxy" type="capsule" size="0.006 0.072" euler="1.5708 0 0" mass="0.006" condim="6" friction="8.0 0.12 0.012" solref="0.01 1" priority="2" rgba="0.9 0.7 0.35 0.20" />
+            <!-- Wide spool grip area. The center grip cylinder is sized to be wider than the closed
+                 jaw pad gap (~10 mm face-to-face), so the jaws press FIRMLY against the cylinder
+                 with strong normal force and high friction. The narrower "neck" cylinders above
+                 and below act as flange-style mechanical stops if the whisk slips axially.
+                 Body-local +Y is world -Z (down), so smaller body-Y values are HIGHER in world.
+                 Pad center settles at world z = grasp_height = 0.112 (with whisk body z=0.077).
+                 Top flange at body Y=-0.065 -> world z=0.142 (above pad top z=0.130).
+                 Bottom flange at body Y=-0.005 -> world z=0.082 (below pad bottom z=0.094).
+                 Center grip cylinder spans body Y from -0.060 to -0.010 (= world z 0.087 to 0.137). -->
+            <geom name="matcha_whisk_grip_top_flange" type="cylinder" pos="0 -0.065 0" size="0.025 0.003" euler="1.5708 0 0" mass="0.0015" condim="6" friction="16.0 0.24 0.024" solref="0.005 1" solimp="0.99 0.999 0.001" priority="2" rgba="0.9 0.7 0.35 0.20" />
+            <geom name="matcha_whisk_grip_band_proxy" type="cylinder" pos="0 -0.035 0" size="0.011 0.025" euler="1.5708 0 0" mass="0.003" condim="6" friction="16.0 0.24 0.024" solref="0.005 1" solimp="0.99 0.999 0.001" priority="2" rgba="0.9 0.7 0.35 0.18" />
+            <geom name="matcha_whisk_grip_bottom_flange" type="cylinder" pos="0 -0.005 0" size="0.025 0.003" euler="1.5708 0 0" mass="0.0015" condim="6" friction="16.0 0.24 0.024" solref="0.005 1" solimp="0.99 0.999 0.001" priority="2" rgba="0.9 0.7 0.35 0.20" />
+            <!-- Head proxy: 30 x 30 mm footprint, fits comfortably (9 mm clearance) inside the
+                 48 mm-dia cup interior during whisking. Static stability comes from the weld
+                 constraint, not the head footprint. -->
+            <geom name="matcha_whisk_head_proxy" type="box" pos="0 0.072 0" size="0.015 0.005 0.015" mass="0.0008" condim="6" friction="0.25 0.005 0.0005" solref="0.01 1" rgba="0.75 0.75 0.75 0.16" />
+            <site name="matcha_whisk_site" pos="0 0 0" size="0.006" rgba="1 0.8 0 0.5" />
+        </body>
+
+        <camera name="matcha_observer" pos="0.25 -0.38 0.36" xyaxes="1 0 0 0 0.55 0.4" fovy="55" />
+        <camera name="table_observer" pos="0.25 0 0.5" xyaxes="1 0 0 0 1 0" fovy="60" />
+    </worldbody>
+
+    <!-- The whisk standing vertically on its narrow head bristles is statically unstable. We pin its
+         initial pose with a weld equality constraint and release it after the gripper has clamped
+         around the grip band, so the demo can focus on whisking instead of recovering from a fallen
+         whisk. The default relpose follows the body's pos/quat above. -->
+    <equality>
+        <!-- Light weld constraint that keeps the whisk standing upright on its wide head base.
+             The head's 70 x 70 mm footprint provides most of the static stability; the weld just
+             damps small disturbances and is released after the gripper grasp is established. -->
+        <weld name="whisk_initial_lock" body1="matcha_whisk" solref="0.005 1" solimp="0.99 0.999 0.001" />
+    </equality>
+</mujoco>

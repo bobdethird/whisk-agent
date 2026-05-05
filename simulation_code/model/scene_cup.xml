@@ -31,6 +31,7 @@
         <mesh name="GlassCup023_collision_mesh_12" file="objects/nvidia_glass_cup/glass_cup/GlassCup023/collision/collision_mesh_collision_12.obj" />
         <mesh name="GlassCup023_collision_mesh_13" file="objects/nvidia_glass_cup/glass_cup/GlassCup023/collision/collision_mesh_collision_13.obj" />
         <mesh name="GlassCup023_collision_mesh_14" file="objects/nvidia_glass_cup/glass_cup/GlassCup023/collision/collision_mesh_collision_14.obj" />
+        <material name="spoon_material" rgba="0.86 0.86 0.90 1.0" specular="0.35" shininess="0.5" />
         <mesh name="place_tag36h11_00000_mesh" file="apriltags/tag_card.obj" scale="0.03 0.03 0.002" />
         <texture type="2d" name="place_tag36h11_00000_texture" file="assets/apriltags/tag36_11_00000.png" />
         <material name="place_tag36h11_00000" texture="place_tag36h11_00000_texture" rgba="1 1 1 1" texuniform="true" texrepeat="1 1" emission="0.5" specular="0" shininess="0" reflectance="0" />
@@ -103,6 +104,12 @@
                 <geom name="second_cup_tag36h11_00001_visual" type="mesh" mesh="second_cup_tag36h11_00001_mesh" material="second_cup_tag36h11_00001" contype="0" conaffinity="0" density="0" />
                 <site name="second_cup_tag36h11_00001_site" pos="0 0 0" size="0.005" rgba="0 1 0 0" />
             </body>
+        </body>
+        <body name="spoon" pos="0.26 0.12 0.004">
+            <geom name="spoon_handle_collision" type="capsule" fromto="-0.07 0 0 0.07 0 0" size="0.004" mass="0.01" condim="6" friction="0.9 0.02 0.002" solref="0.01 1" rgba="0.86 0.86 0.9 1" />
+            <geom name="spoon_bowl_collision" type="ellipsoid" pos="0.0808 0 0" size="0.018 0.013 0.004" mass="0.01" condim="6" friction="0.9 0.02 0.002" solref="0.01 1" rgba="0.86 0.86 0.9 1" />
+            <geom name="spoon_visual" type="capsule" fromto="-0.07 0 0 0.0952 0 0" size="0.0036" material="spoon_material" contype="0" conaffinity="0" density="0" />
+            <site name="spoon_site" pos="0 0 0" size="0.004" rgba="1 1 0 0.5" />
         </body>
         <camera name="cup_observer" pos="0.25 -0.35 0.35" xyaxes="1 0 0 0 0.55 0.4" fovy="55" />
         <camera name="table_observer" pos="0.08 -0.28 0.18" xyaxes="0.7945188897 -0.6072394371 0 0.1150475128 0.1505294561 0.9818884624" fovy="60" />

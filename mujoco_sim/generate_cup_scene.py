@@ -18,9 +18,11 @@ try:
         DEFAULT_CUP_RADIUS,
         NVIDIA_GLASS_CUP_ASSET,
         PLACE_TAG,
+        SPOON,
         TABLE_TAGS,
         TABLE_SCENE,
         CupObjectSpec,
+        SpoonObjectSpec,
     )
     from .scene_authoring import (
         MODEL_DIR,
@@ -49,9 +51,11 @@ except ImportError:
         DEFAULT_CUP_RADIUS,
         NVIDIA_GLASS_CUP_ASSET,
         PLACE_TAG,
+        SPOON,
         TABLE_TAGS,
         TABLE_SCENE,
         CupObjectSpec,
+        SpoonObjectSpec,
     )
     from scene_authoring import (
         MODEL_DIR,
@@ -127,6 +131,14 @@ def add_cup_assets(asset: ET.Element, output_path: Path) -> None:
             name=NVIDIA_GLASS_CUP_ASSET.collision_mesh_name(index),
             file=mesh_asset_path(collision_mesh_path),
         )
+    ET.SubElement(
+        asset,
+        "material",
+        name="spoon_material",
+        rgba="0.86 0.86 0.90 1.0",
+        specular="0.35",
+        shininess="0.5",
+    )
 
 
 def add_cup_body(worldbody: ET.Element, cup: CupObjectSpec) -> None:
@@ -164,6 +176,50 @@ def add_cup_body(worldbody: ET.Element, cup: CupObjectSpec) -> None:
     add_apriltag_body(body, cup.tag)
 
 
+def add_spoon_body(worldbody: ET.Element, spoon: SpoonObjectSpec) -> None:
+    body = ET.SubElement(worldbody, "body", name=spoon.body_name, pos=format_floats(list(spoon.initial_position)))
+    half_handle = 0.5 * spoon.handle_length
+    ET.SubElement(
+        body,
+        "geom",
+        name=f"{spoon.body_name}_handle_collision",
+        type="capsule",
+        fromto=format_floats([-half_handle, 0.0, 0.0, half_handle, 0.0, 0.0]),
+        size=f"{spoon.handle_radius:g}",
+        mass=f"{0.5 * spoon.mass:g}",
+        condim="6",
+        friction=format_floats(list(spoon.friction)),
+        solref="0.01 1",
+        rgba=format_floats(list(spoon.rgba)),
+    )
+    ET.SubElement(
+        body,
+        "geom",
+        name=f"{spoon.body_name}_bowl_collision",
+        type="ellipsoid",
+        pos=format_floats([half_handle + spoon.bowl_radii[0] * 0.6, 0.0, 0.0]),
+        size=format_floats(list(spoon.bowl_radii)),
+        mass=f"{0.5 * spoon.mass:g}",
+        condim="6",
+        friction=format_floats(list(spoon.friction)),
+        solref="0.01 1",
+        rgba=format_floats(list(spoon.rgba)),
+    )
+    ET.SubElement(
+        body,
+        "geom",
+        name=f"{spoon.body_name}_visual",
+        type="capsule",
+        fromto=format_floats([-half_handle, 0.0, 0.0, half_handle + spoon.bowl_radii[0] * 1.4, 0.0, 0.0]),
+        size=f"{max(spoon.handle_radius * 0.9, 0.003):g}",
+        material="spoon_material",
+        contype="0",
+        conaffinity="0",
+        density="0",
+    )
+    ET.SubElement(body, "site", name=spoon.site_name, pos="0 0 0", size="0.004", rgba="1 1 0 0.5")
+
+
 def build_scene(output_path: Path = CUP_SCENE_PATH) -> ET.ElementTree:
     root = make_scene_root("cup_pickup_scene", output_path, "mujoco_sim/generate_cup_scene.py")
     add_visual(root)
@@ -178,6 +234,7 @@ def build_scene(output_path: Path = CUP_SCENE_PATH) -> ET.ElementTree:
         add_apriltag_body(worldbody, tag)
     for cup in CUPS:
         add_cup_body(worldbody, cup)
+    add_spoon_body(worldbody, SPOON)
     add_cameras(worldbody, CUP_SCENE_CAMERAS)
 
     ET.indent(root, space="    ")
@@ -239,6 +296,17 @@ def write_metadata(metadata_path: Path, scene_path: Path) -> None:
             }
             for cup in CUPS
         ],
+        "spoon": {
+            "label": SPOON.label,
+            "body": SPOON.body_name,
+            "initial_position": SPOON.initial_position,
+            "mass": SPOON.mass,
+            "friction": SPOON.friction,
+            "handle_length": SPOON.handle_length,
+            "handle_radius": SPOON.handle_radius,
+            "bowl_radii": SPOON.bowl_radii,
+            "site": SPOON.site_name,
+        },
         "cameras": [
             {
                 "name": camera.name,

@@ -41,6 +41,18 @@ MUJOCO_GRIPPERFRAME_TOOL_OFFSETS: dict[ToolPointName, np.ndarray] = {
     FIXED_JAW_TOOL_POINT: MUJOCO_GRIPPERFRAME_TO_FIXED_JAW_TARGET_OFFSET,
 }
 
+# The "claw target" frame above is a tool-point convention. To actually pinch
+# a small object, the IK target must be commanded *past* the object so the
+# moving-jaw swing arc closes through it. This offset (in claw frame) is
+# applied by `grasp_library.world_grasp_from_object` to translate a logical
+# "pinch on object X" grasp into the IK target the planner should drive to.
+# It was calibrated empirically against the cup-body grasp known to succeed:
+# claw_target at world (0.34, 0.03, z) cleanly clamped a cup centered at
+# (0.32, 0, z); that gives an offset of (+0.02 along claw_x, +0.03 along
+# claw_z, 0 along claw_y) -- since the convention is "claw_target = pinch -
+# R @ offset", offset = -(+0.02, 0, +0.03) in claw axes.
+SO101_CLAW_TARGET_TO_GRIP_PAD_OFFSET = np.array([-0.016, 0.0, -0.007], dtype=float)
+
 
 def _require_pose_matrix(pose: np.ndarray) -> np.ndarray:
     pose = np.asarray(pose, dtype=float)

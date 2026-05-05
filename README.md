@@ -149,6 +149,72 @@ To inspect the cup-pickup scene directly:
 mjpython -m mujoco.viewer --mjcf=simulation_code/model/scene_cup.xml
 ```
 
+## Run The Matcha Demo
+
+The matcha demo scene uses NVIDIA kitchen MJCF assets downloaded under `simulation_code/assets/nvidia_kitchen/` with a symlink at `simulation_code/model/assets/nvidia_kitchen/` so MuJoCo can resolve them through the SO-101 model asset directory.
+
+On macOS, open the scripted viewer demo with `mjpython`:
+
+```bash
+conda activate whisk-agent
+cd /path/to/agent-1
+mjpython mujoco_sim/run_matcha_demo.py
+```
+
+Run the same scripted sequence headless:
+
+```bash
+python mujoco_sim/run_matcha_demo.py --headless
+```
+
+Useful overrides:
+
+```bash
+python mujoco_sim/run_matcha_demo.py \
+  --headless \
+  --scene simulation_code/model/scene_matcha.xml \
+  --whisk-position 0.25 0.12 0.09 \
+  --main-cup-position 0.32 0.0 0.045 \
+  --whisk-stroke-length 0.035 \
+  --whisk-strokes 18
+```
+
+## Run The Matcha Plan On A Real SO-101 Follower
+
+`real_robot/run_matcha_real.py` reuses the matcha IK waypoints, but sends only joint-position commands to a calibrated LeRobot SO-101 follower arm. You do not need the leader arm for this runner; you only need the follower port and the same follower `id` used during calibration.
+
+Preview the hardware joint plan without moving the robot:
+
+```bash
+export SO101_PORT=/dev/tty.usbmodemYOUR_FOLLOWER_PORT
+export SO101_ID=your_existing_follower_id
+python real_robot/run_matcha_real.py --speed-scale 0.15
+```
+
+Move the real follower, slowly, with confirmation before every phase:
+
+```bash
+python real_robot/run_matcha_real.py \
+  --port "$SO101_PORT" \
+  --id "$SO101_ID" \
+  --speed-scale 0.15 \
+  --execute
+```
+
+The real-runner gripper defaults are `--open-gripper 0`, `--preclose-gripper 30`, and `--closed-gripper 100`. If your physical gripper moves the opposite way, swap `--open-gripper` and `--closed-gripper`. To test only the gripper without moving the arm joints, run:
+
+```bash
+python real_robot/run_matcha_real.py \
+  --port "$SO101_PORT" \
+  --id "$SO101_ID" \
+  --test-gripper \
+  --execute
+```
+
+If the gripper is still too narrow during the descent, move `--preclose-gripper` closer to your open value; if it misses the whisk when closing, move it closer to your closed value. The whisking motion includes a subtle `--whisk-vertical-amplitude 0.008` m upward lift on alternating strokes; raise it a little for more visible motion, or lower it if the whisk gets too close to the rim.
+
+Test in this order: no whisk/cup, then whisk only, then empty cup, then liquid. Keep the workspace clear and power/USB reachable while testing.
+
 ## Run The AprilTag Camera Demo
 
 Render the generated camera view and save it to `apriltag_camera_frame.png`:
@@ -277,7 +343,11 @@ In the viewer, a green sphere marks the hover point estimated from vision, and a
 
 ## Run The Cup Pick/Place/Pour Test
 
-`mujoco_sim/run_cup_pickup.py` loads `simulation_code/model/scene_cup.xml`, configures cup mass/friction, detects the cup-mounted AprilTag ID `6`, and detects a flat placement AprilTag ID `0` on the table. The agent flow picks the first cup, places it on the flat tag, picks a second cup with mounted AprilTag ID `1`, then pours from the second cup into the first instead of placing it on top. A blue marker shows each low pregrasp waypoint. The result prints pass/fail for each pickup and placement stage.
+`mujoco_sim/run_cup_pickup.py` loads `simulation_code/model/scene_cup.xml`, configures cup mass/friction, detects the cup-mounted AprilTags (default tag **6** on the first cup and tag **1** on the second), and detects a flat placement AprilTag ID **0** on the table. By default it runs the **pick -> place -> pour** sequence: pick the first cup, place it on the flat tag, pick the second cup, then pour from the second cup into the first. A blue marker shows each low pregrasp waypoint; pass/fail prints per pickup and placement/pour stage.
+
+Optionally, enable **`use_grasp_library`** (via `PickupConfig` / tooling such as `scripts/visualize_grasp_offsets.py`) to fuse poses through **`grasp_library`**, use explicit grasp orientation (handle pinch), and show green / blue / yellow markers for object origin, claw IK target, and pregrasp. See **`OFFSET_CALCULATIONS.md`** (including **Generalizing beyond cups**).
+
+**Three stacked cups (separate bodies, top -> mid -> bottom):** `grasp_library.THREE_CUP_STACK` + `mujoco_sim/run_stack_pickup.py` with `simulation_code/model/scene_cup_stack.xml` uses tag **8** on the bottom cup and tag **9** on `placement_pad` for vision-guided set-down (see **`OFFSET_CALCULATIONS.md`**).
 
 Run the visual sequence test:
 
@@ -307,14 +377,16 @@ python mujoco_sim/run_cup_pickup.py --sweep
 
 Important pickup controls:
 
-- `--cup-position X Y Z` changes the configured cup pose before detection.
-- `--second-cup-position X Y Z` changes the configured second-cup pose before detection.
-- `--cup-radius` tunes approach planning around the fixed mesh cup; `--cup-mass`, `--cup-friction`, `--jaw-friction`, and `--gripper-force` tune contact behavior.
+- `--cup-position X Y Z` changes the configured first-cup pose before detection; `--second-cup-position X Y Z` does the same for the second cup.
+- `--cup-yaw-deg` changes the first cup's spawn yaw, and `--cup-radius` tunes approach planning around the fixed mesh cup.
+- `--cup-mass`, `--cup-friction`, `--jaw-friction`, and `--gripper-force` tune contact behavior.
 - `--side-grasp-offset` sets the small depth offset toward the robot, and `--lateral-grasp-offset` is added to `cup_radius` for the fixed-jaw left offset. This keeps the fixed jaw on the cup edge instead of aiming at the cup center or top.
 - `--cup-tag-id`, `--second-cup-tag-id`, `--cup-tag-size`, and `--tag-to-cup-center-offset X Y Z` describe the cup-mounted tags.
 - `--place-tag-id`, `--place-tag-size`, and `--place-tag-position X Y Z` describe the flat placement tag.
 - `--place-approach-height`, `--place-lateral-retreat`, `--place-success-xy-tolerance`, and `--place-success-z-tolerance` tune placement motion and success checks.
-- `--allow-config-cup-position-fallback` uses configured cup/place tag positions if tag detection fails; without it, missing tag detection is an error.
+- `--first-waypoint-clearance` tunes the pregrasp waypoint distance beyond the cup radius (forward and left offsets use `cup_radius + clearance`).
+- For **`grasp_library`**-style targets (stack pickup, visualization): `--primary-tag-id` selects `TAG_TO_OBJECT`; `--grasp-index` selects the grasp on that object (when using tooling that passes these through `PickupConfig`).
+- `--allow-config-cup-position-fallback` uses configured cup/place positions if tag detection fails; without it, missing detection is an error.
 
 ## Run The OpenAI Cup Agent
 

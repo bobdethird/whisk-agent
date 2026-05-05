@@ -11,6 +11,8 @@ from so101_kinematics import (
     FIXED_JAW_TOOL_POINT,
     MUJOCO_SITE_NAME,
     ToolPointName,
+    claw_target_pose_to_gripperframe_pose,
+    gripperframe_pose_to_claw_target_pose,
     gripperframe_pose_to_tool_target_pose,
     pose_from_position_rotation,
     rotation_error_rad,
@@ -21,6 +23,11 @@ from so101_mujoco_utils import JOINT_ORDER, convert_to_list, move_to_pose
 
 DEFAULT_POSITION_WEIGHT = 1.0
 DEFAULT_ORIENTATION_WEIGHT = 0.01
+# A high weight pulls the IK into different local minima for some targets;
+# match the default position-mode weight and let the explicit target rotation
+# act as a soft hint. Position is what matters for landing the gripper on a
+# small bar.
+EXPLICIT_ORIENTATION_WEIGHT = DEFAULT_ORIENTATION_WEIGHT
 DEFAULT_MAX_ITERATIONS = 100
 FIXED_WRIST_POSITION_JOINTS = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex")
 REFINEMENT_MAX_EVALUATIONS = 200
@@ -112,25 +119,44 @@ def solve_ik(
     env: SimEnv,
     xyz: np.ndarray | tuple[float, float, float] | list[float],
     gripper_position: float | None = None,
+    *,
+    rotation: np.ndarray | None = None,
     tool_point: ToolPointName = FIXED_JAW_TOOL_POINT,
 ) -> IKPlan:
     target = _target_xyz(xyz)
     current_position = dict(env.current_position)
-    current_position["wrist_roll"] = HORIZONTAL_WRIST_ROLL_DEGREES
-    current_pose = env.kinematics.forward_kinematics(current_position, frame="mujoco")
-    target_pose = pose_from_position_rotation(target, current_pose[:3, :3])
-    gripperframe_pose = tool_target_pose_to_gripperframe_pose(target_pose, tool_point)
+
+    if rotation is None:
+        current_position["wrist_roll"] = HORIZONTAL_WRIST_ROLL_DEGREES
+        current_pose = env.kinematics.forward_kinematics(current_position, frame="mujoco")
+        target_pose = pose_from_position_rotation(target, current_pose[:3, :3])
+        gripperframe_pose = tool_target_pose_to_gripperframe_pose(target_pose, tool_point)
+        orientation_weight = DEFAULT_ORIENTATION_WEIGHT
+    else:
+        target_rotation = np.asarray(rotation, dtype=float)
+        if target_rotation.shape != (3, 3):
+            raise ValueError(f"rotation must be a 3x3 matrix; got {target_rotation.shape}.")
+        target_pose = pose_from_position_rotation(target, target_rotation)
+        gripperframe_pose = claw_target_pose_to_gripperframe_pose(target_pose)
+        orientation_weight = EXPLICIT_ORIENTATION_WEIGHT
+
     target_position = env.kinematics.inverse_kinematics(
         current_position,
         gripperframe_pose,
         position_weight=DEFAULT_POSITION_WEIGHT,
-        orientation_weight=DEFAULT_ORIENTATION_WEIGHT,
+        orientation_weight=orientation_weight,
         gripper=current_position["gripper"] if gripper_position is None else float(gripper_position),
         max_iterations=DEFAULT_MAX_ITERATIONS,
     )
-    target_position = _refine_fixed_wrist_position(env, target_pose, target_position, tool_point)
+    if rotation is None:
+        target_position = _refine_fixed_wrist_position(env, target_pose, target_position, tool_point)
+
     solved_gripperframe_pose = env.kinematics.forward_kinematics(target_position, frame="mujoco")
-    solved_target_pose = gripperframe_pose_to_tool_target_pose(solved_gripperframe_pose, tool_point)
+    if rotation is None:
+        solved_target_pose = gripperframe_pose_to_tool_target_pose(solved_gripperframe_pose, tool_point)
+    else:
+        solved_target_pose = gripperframe_pose_to_claw_target_pose(solved_gripperframe_pose)
+
     return IKPlan(
         target_pose=target_pose,
         gripperframe_pose=gripperframe_pose,
