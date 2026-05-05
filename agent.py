@@ -7,6 +7,7 @@ from gripper import OPEN_GRIPPER, gripper
 from motion import move
 from pose_estimation import detect_apriltags, require_named_id
 from sim_env import SimEnv
+from so101_kinematics import FIXED_JAW_TOOL_POINT
 from so101_mujoco_utils import hold_position
 
 
@@ -62,7 +63,14 @@ def run(env: SimEnv, hover_height: float = 0.02, move_duration: float = 2.0, pau
             f"y={estimate.world_position[1]:.4f} "
             f"z={estimate.world_position[2]:.4f} m"
         )
-        move(env, target, gripper_position=OPEN_GRIPPER, duration=move_duration, show_marker=False)
+        move(
+            env,
+            target,
+            gripper_position=OPEN_GRIPPER,
+            duration=move_duration,
+            show_marker=False,
+            tool_point=FIXED_JAW_TOOL_POINT,
+        )
         if index < len(tag_items) - 1:
             print(f"agent: pausing {pause_duration:.1f}s before next tag")
             hold_position(env.model, env.data, env.viewer, duration=pause_duration)
