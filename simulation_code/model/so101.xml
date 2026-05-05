@@ -63,8 +63,7 @@
     <mesh file="sts3215_03a_no_horn_v1.stl"/>
     <mesh file="base_so101_v2.stl"/>
     <mesh file="moving_jaw_so101_gripper_v1.stl"/>
-    <!-- Local replacement camera mount STL is exported in millimeters. -->
-    <mesh file="wrist_roll_follower_so101_camera_mount.stl" scale="0.001 0.001 0.001"/>
+    <mesh file="wrist_roll_follower_so101_camera_mount.stl"/>
     <!-- Gripper collision meshes. -->
     <mesh maxhullvert="64" file="wrist_roll_follower_so101_gripper_part0_v1.stl"/>
     <mesh maxhullvert="64" file="moving_jaw_so101_gripper_part0_v1.stl"/>
@@ -175,7 +174,7 @@
                 <body name="camera_mount">
                   <camera name="wrist_cam" mode="fixed" pos="0.0 0.055 -0.045" euler="-0.57 0 0"
                    resolution="1920 1080" sensorsize="0.00576 0.00324"  focal="0.0036 0.0036"/>
-                  <geom type="mesh" mass="0.012" class="visual" pos="-0.015 0.021154 -0.031597" quat="-0.5 0.5 -0.5 0.5" mesh="wrist_roll_follower_so101_camera_mount" material="wrist_roll_follower_so101_v1_material"/>
+                  <geom type="mesh" mass="0.012" class="visual" pos="0 -0.000218 0.00095" quat="0 1 0 0" mesh="wrist_roll_follower_so101_camera_mount" material="wrist_roll_follower_so101_v1_material"/>
                   <geom name="camera_box1" class="collision_gripper" type="box" size="0.015 0.015 0.003" pos="-0.0025 0.03 -0.03"/>
                   <geom name="camera_box2" class="collision_gripper" type="box" size="0.021 0.021 0.003" pos="-0.001 0.06 -0.04" euler="-0.55 0 0"/>
                 </body>
