@@ -1,0 +1,10 @@
+# Core simulation and numeric dependencies.
+mujoco
+numpy
+scipy
+
+# SO-101 kinematics adapter dependencies.
+lerobot[kinematics]
+
+# AprilTag detection for camera demos and pose estimation.
+pupil-apriltags
