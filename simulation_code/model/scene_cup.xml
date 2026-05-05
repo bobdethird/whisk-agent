@@ -14,6 +14,7 @@
         <material name="work_table_top_material" texture="work_table_top_texture" rgba="0.55 0.36 0.2 1" texuniform="true" texrepeat="3 2" reflectance="0" specular="0.08" shininess="0.08" />
         <material name="work_table_leg_material" rgba="0.36 0.22 0.12 1" reflectance="0" specular="0.05" shininess="0.05" />
         <material name="cup_material" rgba="0.85 0.92 1.0 0.65" specular="0.2" shininess="0.25" />
+        <material name="cup_handle_material" rgba="0.85 0.92 1.0 0.85" specular="0.2" shininess="0.25" />
         <mesh name="place_tag36h11_00000_mesh" file="apriltags/tag_card.obj" scale="0.03 0.03 0.002" />
         <texture type="2d" name="place_tag36h11_00000_texture" file="assets/apriltags/tag36_11_00000.png" />
         <material name="place_tag36h11_00000" texture="place_tag36h11_00000_texture" rgba="1 1 1 1" texuniform="true" texrepeat="1 1" emission="0.5" specular="0" shininess="0" reflectance="0" />
@@ -23,6 +24,9 @@
         <mesh name="second_cup_tag36h11_00001_mesh" file="apriltags/tag_card.obj" scale="0.03 0.03 0.002" />
         <texture type="2d" name="second_cup_tag36h11_00001_texture" file="assets/apriltags/tag36_11_00001.png" />
         <material name="second_cup_tag36h11_00001" texture="second_cup_tag36h11_00001_texture" rgba="1 1 1 1" texuniform="true" texrepeat="1 1" emission="0.5" specular="0" shininess="0" reflectance="0" />
+        <mesh name="cup_tag36h11_00007_mesh" file="apriltags/tag_card.obj" scale="0.03 0.03 0.002" />
+        <texture type="2d" name="cup_tag36h11_00007_texture" file="assets/apriltags/tag36_11_00007.png" />
+        <material name="cup_tag36h11_00007" texture="cup_tag36h11_00007_texture" rgba="1 1 1 1" texuniform="true" texrepeat="1 1" emission="0.5" specular="0" shininess="0" reflectance="0" />
     </asset>
     <worldbody>
         <light pos="0 0 3.5" dir="0 0 -1" directional="true" />
@@ -45,9 +49,16 @@
             <geom name="cup_rim_collision" type="cylinder" size="0.023 0.004" pos="0 0 0.041" density="0" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.75 1 0.35" />
             <geom name="cup_visual" type="cylinder" size="0.0235 0.0455" material="cup_material" contype="0" conaffinity="0" density="0" />
             <site name="cup_site" pos="0 0 0" size="0.006" rgba="0 1 0 0.5" />
-            <body name="cup_tag36h11_00006" pos="-0.026 0 0" quat="0.7071067812 0 -0.7071067812 0">
+            <geom name="cup_handle_collision" type="capsule" fromto="0.0 0.060 -0.020 0.0 0.060 0.045" size="0.005" density="0" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.75 1.0 0.35" />
+            <geom name="cup_handle_visual" type="capsule" fromto="0.0 0.060 -0.020 0.0 0.060 0.045" size="0.005" material="cup_handle_material" contype="0" conaffinity="0" density="0" />
+            <site name="cup_handle_site" pos="0 0.060 0.025" size="0.004" rgba="1 0.5 0 0.6" />
+            <body name="cup_tag36h11_00006" pos="-0.026 0 0.067" quat="0.7071067812 0 -0.7071067812 0">
                 <geom name="cup_tag36h11_00006_visual" type="mesh" mesh="cup_tag36h11_00006_mesh" material="cup_tag36h11_00006" contype="0" conaffinity="0" density="0" />
                 <site name="cup_tag36h11_00006_site" pos="0 0 0" size="0.005" rgba="0 1 0 0" />
+            </body>
+            <body name="cup_tag36h11_00007" pos="0 -0.026 0.000" quat="0.7071067812 0.7071067812 0 0">
+                <geom name="cup_tag36h11_00007_visual" type="mesh" mesh="cup_tag36h11_00007_mesh" material="cup_tag36h11_00007" contype="0" conaffinity="0" density="0" />
+                <site name="cup_tag36h11_00007_site" pos="0 0 0" size="0.005" rgba="0 1 0 0" />
             </body>
         </body>
         <body name="second_cup" pos="0.32 -0.14 0.045">

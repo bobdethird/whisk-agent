@@ -15,6 +15,14 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from grasp_library import (
+    TAG_TO_OBJECT,
+    GraspPose,
+    TagDetection,
+    TaggedObject,
+    fuse_object_pose,
+    world_grasp_from_object,
+)
 from gripper import CLOSED_GRIPPER, OPEN_GRIPPER
 from motion import solve_ik
 from mujoco_sim.cup_scene_config import (
@@ -44,6 +52,7 @@ from so101_mujoco_utils import JOINT_ORDER, convert_to_dictionary, send_position
 
 
 MODEL_PATH = CUP_SCENE_PATH
+STACK_SCENE_PATH = ROOT_DIR / "simulation_code" / "model" / "scene_cup_stack.xml"
 CUP_BODY_NAME = PRIMARY_CUP.body_name
 CUP_FREEJOINT_NAME = PRIMARY_CUP.freejoint_name
 SECOND_CUP_BODY_NAME = SECOND_CUP.body_name
@@ -117,6 +126,15 @@ class PickupConfig:
     place_success_z_tolerance: float = 0.04
     debug_camera_frame_dir: Path | None = CUP_DEBUG_FRAME_DIR
     allow_config_position_fallback: bool = False
+    primary_tag_id: int | None = None
+    grasp_index: int = 0
+    cup_yaw_deg: float = 0.0
+    skip_cup_geom_resize: bool = False
+    use_grasp_library: bool = False
+
+
+def _effective_primary_tag_id(config: PickupConfig) -> int:
+    return config.primary_tag_id if config.primary_tag_id is not None else config.cup_tag_id
 
 
 @dataclass(frozen=True)
@@ -264,6 +282,10 @@ class CupTargetPoints:
     green_center: np.ndarray
     blue_pregrasp: np.ndarray
     tag_estimate: TagPoseEstimate | None
+    object_position: np.ndarray | None = None
+    grasp_position: np.ndarray | None = None
+    pregrasp_position: np.ndarray | None = None
+    grasp_rotation: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -342,11 +364,17 @@ def _set_freejoint_pose(
     data: mujoco.MjData,
     joint_name: str,
     position: tuple[float, float, float],
+    yaw_deg: float = 0.0,
 ) -> None:
     joint_id = _require_id(model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
     qpos_address = int(model.jnt_qposadr[joint_id])
     qvel_address = int(model.jnt_dofadr[joint_id])
-    data.qpos[qpos_address : qpos_address + 7] = [*position, 1.0, 0.0, 0.0, 0.0]
+    if abs(yaw_deg) < 1e-9:
+        data.qpos[qpos_address : qpos_address + 7] = [*position, 1.0, 0.0, 0.0, 0.0]
+    else:
+        half = math.radians(yaw_deg) / 2.0
+        quat = (math.cos(half), 0.0, 0.0, math.sin(half))
+        data.qpos[qpos_address : qpos_address + 7] = [*position, *quat]
     data.qvel[qvel_address : qvel_address + 6] = 0.0
     mujoco.mj_forward(model, data)
 
@@ -406,16 +434,18 @@ def configure_cup(env: SimEnv, config: PickupConfig, cup: CupSpec) -> ContactDia
     fixed_jaw_body_id = _require_id(env.model, mujoco.mjtObj.mjOBJ_BODY, FIXED_JAW_BODY_NAME)
     moving_jaw_body_id = _require_id(env.model, mujoco.mjtObj.mjOBJ_BODY, MOVING_JAW_BODY_NAME)
 
-    _set_cup_size(env.model, cup, config.cup_radius, config.cup_half_height)
-    _set_cup_rim(
-        env.model,
-        cup,
-        config.cup_radius,
-        config.cup_half_height,
-        config.cup_rim_overhang,
-        config.cup_rim_half_height,
-    )
-    _set_freejoint_pose(env.model, env.data, cup.freejoint_name, cup.initial_position)
+    if not config.skip_cup_geom_resize:
+        _set_cup_size(env.model, cup, config.cup_radius, config.cup_half_height)
+        _set_cup_rim(
+            env.model,
+            cup,
+            config.cup_radius,
+            config.cup_half_height,
+            config.cup_rim_overhang,
+            config.cup_rim_half_height,
+        )
+    yaw_deg = config.cup_yaw_deg if cup.body_name == PRIMARY_CUP.body_name else 0.0
+    _set_freejoint_pose(env.model, env.data, cup.freejoint_name, cup.initial_position, yaw_deg=yaw_deg)
     _scale_body_mass(env.model, cup_body_id, config.cup_mass)
     _set_actuator_force(env.model, "gripper", config.gripper_force)
 
@@ -564,16 +594,165 @@ def solve_target(
     env: SimEnv,
     xyz: np.ndarray,
     gripper_position: float,
-    tool_point: ToolPointName,
+    tool_point: ToolPointName | None = None,
+    *,
+    rotation: np.ndarray | None = None,
 ) -> dict[str, float]:
-    plan = solve_ik(env, xyz, gripper_position=gripper_position, tool_point=tool_point)
-    target = plan.target_pose[:3, 3]
-    print(
-        "target: "
-        f"x={target[0]:.4f} y={target[1]:.4f} z={target[2]:.4f} m, "
-        f"gripper={gripper_position:.1f}, tool={tool_point}, IK error={plan.position_error:.6f} m"
-    )
+    if rotation is not None:
+        plan = solve_ik(env, xyz, gripper_position=gripper_position, rotation=rotation)
+        target = plan.target_pose[:3, 3]
+        print(
+            "target: "
+            f"x={target[0]:.4f} y={target[1]:.4f} z={target[2]:.4f} m, "
+            f"gripper={gripper_position:.1f}, explicit_rot, "
+            f"IK pos_err={plan.position_error:.6f} m, rot_err={plan.orientation_error:.4f} rad"
+        )
+    else:
+        tp = tool_point if tool_point is not None else FIXED_JAW_TOOL_POINT
+        plan = solve_ik(env, xyz, gripper_position=gripper_position, tool_point=tp)
+        target = plan.target_pose[:3, 3]
+        print(
+            "target: "
+            f"x={target[0]:.4f} y={target[1]:.4f} z={target[2]:.4f} m, "
+            f"gripper={gripper_position:.1f}, tool={tp}, IK error={plan.position_error:.6f} m"
+        )
     return plan.target_position
+
+
+def _resolve_object(config: PickupConfig) -> tuple[TaggedObject, GraspPose]:
+    pid = _effective_primary_tag_id(config)
+    if pid not in TAG_TO_OBJECT:
+        raise KeyError(f"Primary tag {pid} is not registered in grasp_library.TAG_TO_OBJECT.")
+    obj, _ = TAG_TO_OBJECT[pid]
+    if config.grasp_index >= len(obj.grasps):
+        raise IndexError(
+            f"grasp_index={config.grasp_index} is out of range for object {obj.name!r} "
+            f"(has {len(obj.grasps)} grasps)."
+        )
+    return obj, obj.grasps[config.grasp_index]
+
+
+def estimate_object_pose_from_tags(
+    env: SimEnv,
+    obj: TaggedObject,
+    config: PickupConfig,
+) -> tuple[np.ndarray, np.ndarray, tuple[TagPoseEstimate, ...]]:
+    try:
+        estimates = detect_apriltags(
+            env,
+            camera_name=config.cup_tag_camera_names[0],
+            tag_sizes=obj.tag_sizes,
+            camera_names=config.cup_tag_camera_names,
+            debug_frame_dir=config.debug_camera_frame_dir,
+        )
+    except Exception as exc:
+        if not config.allow_config_position_fallback:
+            raise
+        print(f"tag detection failed ({exc}); using configured cup position fallback")
+        return np.array(config.cup_position, dtype=float), np.eye(3), ()
+
+    detections = tuple(estimates[tag_id] for tag_id in sorted(estimates) if obj.anchor_for(tag_id) is not None)
+    if not detections:
+        if config.allow_config_position_fallback:
+            print("no anchor tags detected; using configured cup position fallback")
+            return np.array(config.cup_position, dtype=float), np.eye(3), ()
+        raise RuntimeError(
+            f"None of the anchor tags for {obj.name!r} were detected from cameras: "
+            + ", ".join(config.cup_tag_camera_names)
+        )
+
+    fusion_input = [
+        TagDetection(
+            tag_id=detection.tag_id,
+            world_position=detection.world_position,
+            world_rotation=detection.world_rotation,
+        )
+        for detection in detections
+    ]
+    obj_pos, obj_rot = fuse_object_pose(fusion_input, obj)
+    detection_summary = ", ".join(
+        f"id={d.tag_id}@{d.camera_name} "
+        f"pos=({d.world_position[0]:.3f},{d.world_position[1]:.3f},{d.world_position[2]:.3f})"
+        for d in detections
+    )
+    print(f"object {obj.name!r} fused from [{detection_summary}]")
+    print(
+        f"  pos=({obj_pos[0]:.4f},{obj_pos[1]:.4f},{obj_pos[2]:.4f}) m "
+        f"yaw={math.degrees(math.atan2(obj_rot[1, 0], obj_rot[0, 0])):.2f} deg"
+    )
+    return obj_pos, obj_rot, detections
+
+
+def append_grasp_marker_geoms(
+    scene,
+    object_position: np.ndarray,
+    grasp_position: np.ndarray,
+    pregrasp_position: np.ndarray,
+) -> None:
+    base = scene.ngeom
+    mujoco.mjv_initGeom(
+        scene.geoms[base],
+        type=mujoco.mjtGeom.mjGEOM_SPHERE,
+        size=[0.010, 0.0, 0.0],
+        pos=object_position,
+        mat=np.eye(3).flatten(),
+        rgba=[0.0, 1.0, 0.0, 0.55],
+    )
+    mujoco.mjv_initGeom(
+        scene.geoms[base + 1],
+        type=mujoco.mjtGeom.mjGEOM_SPHERE,
+        size=[0.008, 0.0, 0.0],
+        pos=grasp_position,
+        mat=np.eye(3).flatten(),
+        rgba=[0.0, 0.2, 1.0, 0.85],
+    )
+    mujoco.mjv_initGeom(
+        scene.geoms[base + 2],
+        type=mujoco.mjtGeom.mjGEOM_SPHERE,
+        size=[0.006, 0.0, 0.0],
+        pos=pregrasp_position,
+        mat=np.eye(3).flatten(),
+        rgba=[1.0, 0.85, 0.0, 0.85],
+    )
+    scene.ngeom = base + 3
+
+
+def show_cup_target_points(
+    viewer: mujoco.viewer.Handle | None,
+    object_position: np.ndarray,
+    grasp_position: np.ndarray,
+    pregrasp_position: np.ndarray,
+) -> None:
+    if viewer is None:
+        return
+    viewer.user_scn.ngeom = 0
+    append_grasp_marker_geoms(viewer.user_scn, object_position, grasp_position, pregrasp_position)
+    viewer.sync()
+
+
+def _estimate_cup_target_points_grasp_library(
+    env: SimEnv,
+    config: PickupConfig,
+    cup: CupSpec | None = None,
+) -> CupTargetPoints:
+    cup = primary_cup_spec(config) if cup is None else cup
+    obj, grasp = _resolve_object(config)
+    obj_pos, obj_rot, detections = estimate_object_pose_from_tags(env, obj, config)
+    grasp_pos, grasp_rot, pregrasp_pos = world_grasp_from_object(grasp, obj_pos, obj_rot)
+    tag_est = detections[0] if detections else None
+    print(
+        f"grasp pos=({grasp_pos[0]:.4f},{grasp_pos[1]:.4f},{grasp_pos[2]:.4f}) "
+        f"pregrasp=({pregrasp_pos[0]:.4f},{pregrasp_pos[1]:.4f},{pregrasp_pos[2]:.4f}) m"
+    )
+    return CupTargetPoints(
+        green_center=obj_pos,
+        blue_pregrasp=pregrasp_pos,
+        tag_estimate=tag_est,
+        object_position=obj_pos,
+        grasp_position=grasp_pos,
+        pregrasp_position=pregrasp_pos,
+        grasp_rotation=grasp_rot,
+    )
 
 
 def _format_xyz(position: np.ndarray) -> str:
@@ -905,6 +1084,96 @@ def refresh_viewer_debug_overlays(
     viewer.user_scn.ngeom = geom_index
 
 
+def _execute_pickup_grasp_library(
+    env: SimEnv,
+    config: PickupConfig,
+    diagnostics: ContactDiagnostics,
+    cup: CupSpec,
+    viewer: mujoco.viewer.Handle | None,
+    realtime: bool,
+) -> PickupResult:
+    target_points = _estimate_cup_target_points_grasp_library(env, config, cup)
+    grasp_xyz = target_points.grasp_position
+    pregrasp_xyz = target_points.pregrasp_position
+    grasp_rot = target_points.grasp_rotation
+    obj_pos = target_points.object_position
+    assert grasp_xyz is not None and pregrasp_xyz is not None and grasp_rot is not None and obj_pos is not None
+
+    lift_xyz = grasp_xyz + np.array([0.0, 0.0, config.lift_height], dtype=float)
+    initial_cup_z = float(env.data.xpos[diagnostics.cup_body_id, 2])
+
+    show_cup_target_points(viewer, obj_pos, grasp_xyz, pregrasp_xyz)
+
+    pregrasp_position = solve_target(env, pregrasp_xyz, OPEN_GRIPPER, rotation=grasp_rot)
+    if not command_motion(
+        env,
+        pregrasp_position,
+        config.approach_duration,
+        diagnostics,
+        viewer,
+        realtime,
+        None,
+    ):
+        return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
+
+    grasp_position_dict = solve_target(env, grasp_xyz, OPEN_GRIPPER, rotation=grasp_rot)
+    if not command_motion(
+        env,
+        grasp_position_dict,
+        config.descend_duration,
+        diagnostics,
+        viewer,
+        realtime,
+        None,
+    ):
+        return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
+
+    closed_position = dict(grasp_position_dict)
+    closed_position["gripper"] = CLOSED_GRIPPER
+    if not command_motion(
+        env,
+        closed_position,
+        config.close_duration,
+        diagnostics,
+        viewer,
+        realtime,
+        None,
+    ):
+        return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
+    if not hold_command(
+        env,
+        closed_position,
+        config.squeeze_duration,
+        diagnostics,
+        viewer,
+        realtime,
+        None,
+    ):
+        return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
+
+    lift_position = solve_target(env, lift_xyz, CLOSED_GRIPPER, rotation=grasp_rot)
+    if not command_motion(
+        env,
+        lift_position,
+        config.lift_duration,
+        diagnostics,
+        viewer,
+        realtime,
+        None,
+    ):
+        return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
+    hold_command(
+        env,
+        lift_position,
+        config.final_hold_duration,
+        diagnostics,
+        viewer,
+        realtime,
+        None,
+    )
+    return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
+
+
 def execute_pickup(
     env: SimEnv,
     config: PickupConfig,
@@ -914,6 +1183,9 @@ def execute_pickup(
     realtime: bool = False,
 ) -> PickupResult:
     cup = primary_cup_spec(config) if cup is None else cup
+    if config.use_grasp_library:
+        return _execute_pickup_grasp_library(env, config, diagnostics, cup, viewer, realtime)
+
     target_points = estimate_cup_target_points(env, config, cup)
     pregrasp_xyz = target_points.blue_pregrasp
     approach_xyz = pregrasp_xyz + np.array([0.0, 0.0, config.approach_height], dtype=float)

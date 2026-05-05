@@ -258,7 +258,11 @@ In the viewer, a green sphere marks the hover point estimated from vision, and a
 
 ## Run The Cup Pick/Place/Stack Test
 
-`mujoco_sim/run_cup_pickup.py` loads `simulation_code/model/scene_cup.xml`, configures cup mass/friction/size, detects the cup-mounted AprilTag ID `6`, and detects a flat placement AprilTag ID `0` on the table. By default it picks the first cup, places it on the flat tag, picks a second cup with mounted AprilTag ID `1`, then places the second cup on top of the first. A blue marker shows each low pregrasp waypoint. The result prints pass/fail for each pickup and placement stage.
+`mujoco_sim/run_cup_pickup.py` loads `simulation_code/model/scene_cup.xml`, configures cup mass/friction/size, detects the cup-mounted AprilTags (default tag **6** on the first cup and tag **1** on the second) and a flat placement AprilTag ID **0** on the table. By default it runs the **pick → place → stack** sequence: pick the first cup, place it on the flat tag, pick the second cup, stack it on the first. A blue marker shows each low pregrasp waypoint; pass/fail prints per stage.
+
+Optionally, enable **`use_grasp_library`** (via `PickupConfig` / tooling such as `scripts/visualize_grasp_offsets.py`) to fuse poses through **`grasp_library`**, use explicit grasp orientation (handle pinch), and show green / blue / yellow markers for object origin, claw IK target, and pregrasp. See **`OFFSET_CALCULATIONS.md`** (including **Generalizing beyond cups**).
+
+**Three stacked cups (separate bodies, top→mid→bottom):** `grasp_library.THREE_CUP_STACK` + `mujoco_sim/run_stack_pickup.py` with `simulation_code/model/scene_cup_stack.xml` — tag **8** on the bottom cup; tag **9** on `placement_pad` for vision-guided set-down (see **`OFFSET_CALCULATIONS.md`**).
 
 Run the visual sequence test:
 
@@ -288,14 +292,13 @@ python mujoco_sim/run_cup_pickup.py --sweep
 
 Important pickup controls:
 
-- `--cup-position X Y Z` changes the configured cup pose before detection.
-- `--second-cup-position X Y Z` changes the configured second-cup pose before detection.
-- `--cup-radius`, `--cup-mass`, `--cup-friction`, `--jaw-friction`, and `--gripper-force` tune contact behavior.
-- `--first-waypoint-clearance` tunes the pregrasp waypoint distance beyond the cup radius; forward and left offsets are computed as `cup_radius + clearance`.
-- `--cup-tag-id`, `--second-cup-tag-id`, `--cup-tag-size`, and `--tag-to-cup-center-offset X Y Z` describe the cup-mounted tags.
-- `--place-tag-id`, `--place-tag-size`, and `--place-tag-position X Y Z` describe the flat placement tag.
-- `--place-approach-height`, `--place-lateral-retreat`, `--place-success-xy-tolerance`, and `--place-success-z-tolerance` tune placement motion and success checks.
-- `--allow-config-cup-position-fallback` uses configured cup/place tag positions if tag detection fails; without it, missing tag detection is an error.
+- `--cup-position X Y Z` changes the configured first-cup pose before detection; `--second-cup-position` does the same for the second cup.
+- `--cup-yaw-deg` / `--cup-radius`, `--cup-mass`, `--cup-friction`, `--jaw-friction`, `--gripper-force` tune spawn and contact behavior.
+- `--first-waypoint-clearance` tunes the pregrasp waypoint distance beyond the cup radius (forward and left offsets use `cup_radius + clearance`).
+- `--cup-tag-id`, `--second-cup-tag-id`, `--cup-tag-size`, `--tag-to-cup-center-offset` describe cup-mounted tags; `--place-tag-id`, `--place-tag-size`, `--place-tag-position` describe the flat placement tag.
+- `--place-approach-height`, `--place-lateral-retreat`, `--place-success-xy-tolerance`, `--place-success-z-tolerance` tune placement motion and success checks.
+- For **`grasp_library`**-style targets (stack pickup, visualization): `--primary-tag-id` selects `TAG_TO_OBJECT`; `--grasp-index` selects the grasp on that object (when using tooling that passes these through `PickupConfig`).
+- `--allow-config-cup-position-fallback` uses configured cup/place positions if tag detection fails; without it, missing detection is an error.
 
 ## Troubleshooting
 
