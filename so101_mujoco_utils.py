@@ -84,6 +84,10 @@ def move_to_pose(model, data, viewer, desired_position, duration, step_callback=
 
 def hold_position(model, data, viewer, duration, step_callback=None):
     position_dict = convert_to_dictionary(data.qpos.copy())
+    hold_commanded_position(model, data, viewer, position_dict, duration, step_callback=step_callback)
+
+
+def hold_commanded_position(model, data, viewer, position_dict, duration, step_callback=None):
     start_time = time.time()
 
     while viewer.is_running() and time.time() - start_time < duration:

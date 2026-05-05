@@ -23,11 +23,11 @@
         <geom group="3" condim="3"/>
       </default>
       <default class="collision_gripper">
-        <geom group="3" condim="6" friction="1 5e-3 5e-4" solref="0.01 1" priority="1"
+        <geom group="3" condim="6" friction="1.2 5e-3 5e-4" solref="0.01 1" priority="1"
          rgba="1.0 0 0 1.0" mass="0"/>
       </default>
       <default class="collision_gripper_mesh">
-        <geom group="4" condim="6" friction="1 5e-3 5e-4" solref="0.01 1" priority="1"
+        <geom group="4" condim="6" friction="1.2 5e-3 5e-4" solref="0.01 1" priority="1"
          rgba="1.0 0 0 1.0" mass="0"/>
       </default>
     </default>
@@ -167,6 +167,7 @@
                 <geom name="fixed_jaw_box4" class="collision_gripper" type="box" size="0.001 0.004 0.004" pos="-0.009 0 -0.0982"/>
                 <geom name="fixed_jaw_box5" class="collision_gripper" type="box" size="0.001 0.005 0.006" pos="-0.0108 0 -0.0905"/>
                 <geom name="fixed_jaw_box6" class="collision_gripper" type="box" size="0.001 0.009 0.008" pos="-0.0125 0 -0.0727"/>
+                <geom name="fixed_jaw_grip_pad" class="collision_gripper" type="box" size="0.003 0.012 0.018" pos="-0.013 0 -0.078"/>
                 <geom name="fixed_jaw_box7" class="collision_gripper" type="box" size="0.001 0.01 0.008" pos="-0.0143 0 -0.053"/>
                 <!-- Frame gripperframe -->
                 <site group="3" name="gripperframe" pos="0.012 -0.000218 -0.098127" quat="1 0 1 0"/>
@@ -194,6 +195,7 @@
                   <geom name="moving_jaw_sph_tip3" class="collision_gripper" type="sphere" size="0.00075" pos="-0.012 -0.0745 0.0155 "/>
                   <geom name="moving_jaw_box2" class="collision_gripper" type="box"  size="0.001 0.004 0.004" pos="-0.0113 -0.076 0.01875"/>
                   <geom name="moving_jaw_box3" class="collision_gripper" type="box"  size="0.001 0.005 0.006" pos="-0.0093 -0.067 0.01875"/>
+                  <geom name="moving_jaw_grip_pad" class="collision_gripper" type="box"  size="0.003 0.012 0.018" pos="-0.010 -0.067 0.01875"/>
                 </body>
               </body>
             </body>
