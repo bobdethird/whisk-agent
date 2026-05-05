@@ -37,6 +37,13 @@ from mujoco_sim.cup_scene_config import (
     WRIST_CAMERA_NAME,
     CupObjectSpec,
 )
+from mujoco_sim.path_planning import (
+    CollisionPlanningContext,
+    MotionPlannerConfig,
+    PlanningError,
+    is_arm_motion,
+    plan_joint_path,
+)
 from pose_estimation import TagPoseEstimate, detect_apriltags
 from sim_env import SimEnv, create_env
 from so101_kinematics import CLAW_CENTER_TOOL_POINT, FIXED_JAW_TOOL_POINT, ToolPointName
@@ -117,6 +124,7 @@ class PickupConfig:
     place_success_z_tolerance: float = 0.04
     debug_camera_frame_dir: Path | None = CUP_DEBUG_FRAME_DIR
     allow_config_position_fallback: bool = False
+    motion_planner: MotionPlannerConfig = field(default_factory=MotionPlannerConfig)
 
 
 @dataclass(frozen=True)
@@ -493,6 +501,18 @@ def _interpolate_position(
     }
 
 
+def _path_position_at(
+    path: list[dict[str, float]],
+    alpha: float,
+) -> dict[str, float]:
+    if len(path) == 1:
+        return dict(path[0])
+    scaled = np.clip(alpha, 0.0, 1.0) * (len(path) - 1)
+    index = min(int(math.floor(scaled)), len(path) - 2)
+    local_alpha = float(scaled - index)
+    return _interpolate_position(path[index], path[index + 1], local_alpha)
+
+
 def _step_once(
     env: SimEnv,
     diagnostics: ContactDiagnostics,
@@ -518,6 +538,29 @@ def _step_once(
     return True
 
 
+def command_joint_path(
+    env: SimEnv,
+    path: list[dict[str, float]],
+    duration: float,
+    diagnostics: ContactDiagnostics,
+    viewer: mujoco.viewer.Handle | None = None,
+    realtime: bool = False,
+    debug_overlay: ViewerDebugOverlay | None = None,
+) -> bool:
+    if not path:
+        raise ValueError("command_joint_path() requires at least one waypoint.")
+    steps = max(1, math.ceil(duration / env.model.opt.timestep))
+    for step_index in range(steps):
+        alpha = (step_index + 1) / steps
+        command = _path_position_at(path, alpha)
+        send_position_command(env.data, command)
+        if not _step_once(env, diagnostics, viewer, realtime, debug_overlay):
+            return False
+
+    env.current_position = dict(path[-1])
+    return True
+
+
 def command_motion(
     env: SimEnv,
     target_position: dict[str, float],
@@ -526,8 +569,20 @@ def command_motion(
     viewer: mujoco.viewer.Handle | None = None,
     realtime: bool = False,
     debug_overlay: ViewerDebugOverlay | None = None,
+    planner_config: MotionPlannerConfig | None = None,
+    collision_context: CollisionPlanningContext | None = None,
 ) -> bool:
     start_position = convert_to_dictionary(env.data.qpos.copy())
+    if planner_config is not None and planner_config.planner != "direct" and is_arm_motion(start_position, target_position):
+        try:
+            path = plan_joint_path(env, target_position, planner_config, collision_context=collision_context)
+        except PlanningError as exc:
+            print(f"{planner_config.planner} planner failed: {exc}")
+            return False
+        if planner_config.debug:
+            print(f"{planner_config.planner} planner produced {len(path)} waypoints")
+        return command_joint_path(env, path, duration, diagnostics, viewer, realtime, debug_overlay)
+
     steps = max(1, math.ceil(duration / env.model.opt.timestep))
 
     for step_index in range(steps):
@@ -601,6 +656,18 @@ def solve_target(
         f"gripper={gripper_position:.1f}, tool={tool_point}, IK error={plan.position_error:.6f} m"
     )
     return plan.target_position
+
+
+def planner_context_for_cup(
+    diagnostics: ContactDiagnostics,
+    cup: CupSpec,
+    attach_cup: bool = False,
+) -> CollisionPlanningContext:
+    return CollisionPlanningContext(
+        allowed_gripper_contact_geom_ids=frozenset(diagnostics.cup_geom_ids),
+        attached_body_name=cup.body_name if attach_cup else None,
+        attached_freejoint_name=cup.freejoint_name if attach_cup else None,
+    )
 
 
 def _format_xyz(position: np.ndarray) -> str:
@@ -1076,6 +1143,8 @@ def execute_pickup(
         viewer,
         realtime,
         debug_overlay,
+        planner_config=config.motion_planner,
+        collision_context=planner_context_for_cup(diagnostics, cup, attach_cup=False),
     ):
         return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
 
@@ -1123,6 +1192,8 @@ def execute_pickup(
         viewer,
         realtime,
         debug_overlay,
+        planner_config=config.motion_planner,
+        collision_context=planner_context_for_cup(diagnostics, cup, attach_cup=True),
     ):
         return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
     hold_command(
@@ -1143,9 +1214,11 @@ def execute_place(
     diagnostics: ContactDiagnostics,
     pickup_result: PickupResult,
     target_center: np.ndarray,
+    cup: CupSpec | None = None,
     viewer: mujoco.viewer.Handle | None = None,
     realtime: bool = False,
 ) -> PlacementResult:
+    cup = primary_cup_spec(config) if cup is None else cup
     target_xy = np.asarray(target_center[:2], dtype=float)
     target_xy_norm = float(np.linalg.norm(target_xy))
     if target_xy_norm > 1e-6:
@@ -1173,6 +1246,8 @@ def execute_place(
         viewer,
         realtime,
         debug_overlay,
+        planner_config=config.motion_planner,
+        collision_context=planner_context_for_cup(diagnostics, cup, attach_cup=True),
     ):
         return _placement_result(env, config, diagnostics, target_center)
 
@@ -1247,6 +1322,8 @@ def execute_place(
             viewer,
             realtime,
             debug_overlay,
+            planner_config=config.motion_planner,
+            collision_context=planner_context_for_cup(diagnostics, cup, attach_cup=False),
         )
 
     hold_command(
@@ -1383,6 +1460,7 @@ def execute_pick_place_stack_sequence(
         first_diagnostics,
         first_pickup,
         ground_target_center,
+        first_cup,
         viewer=viewer,
         realtime=realtime,
     )
@@ -1408,6 +1486,7 @@ def execute_pick_place_stack_sequence(
         second_diagnostics,
         second_pickup,
         stack_target_center,
+        second_cup,
         viewer=viewer,
         realtime=realtime,
     )
@@ -1713,6 +1792,38 @@ def parse_args() -> argparse.Namespace:
         help="Use --cup-position if the cup AprilTag is not detected.",
     )
     parser.add_argument(
+        "--planner",
+        choices=("direct", "pyroboplan", "mujoco-rrt"),
+        default="direct",
+        help="Joint-space transit planner. 'direct' preserves the existing interpolation behavior.",
+    )
+    parser.add_argument("--planner-timeout", type=float, default=5.0, help="Seconds allowed for each planned transit.")
+    parser.add_argument(
+        "--planner-step-size",
+        type=float,
+        default=0.05,
+        help="Maximum planner joint step in radians.",
+    )
+    parser.add_argument(
+        "--collision-padding",
+        type=float,
+        default=0.0,
+        help="Minimum MuJoCo geom clearance in meters for planned transit validation.",
+    )
+    parser.add_argument("--planner-seed", type=int, default=None, help="Random seed for sampling-based planners.")
+    parser.add_argument(
+        "--planner-goal-bias",
+        type=float,
+        default=0.2,
+        help="Probability of sampling the goal in the MuJoCo RRT planner.",
+    )
+    parser.add_argument("--planner-debug", action="store_true", help="Print planner rejection and path details.")
+    parser.add_argument(
+        "--no-pyroboplan-fallback",
+        action="store_true",
+        help="Fail instead of falling back to MuJoCo RRT when pyroboplan cannot plan.",
+    )
+    parser.add_argument(
         "--debug-camera-frame-dir",
         type=Path,
         default=CUP_DEBUG_FRAME_DIR,
@@ -1736,6 +1847,24 @@ def config_from_args(
     if jaw_sliding_friction is not None:
         jaw_friction = (jaw_sliding_friction, jaw_friction[1], jaw_friction[2])
     cup_position, second_cup_position, place_tag_position = scene_positions_from_args(args)
+    if args.planner_timeout <= 0.0:
+        raise ValueError("--planner-timeout must be positive.")
+    if args.planner_step_size <= 0.0:
+        raise ValueError("--planner-step-size must be positive.")
+    if args.collision_padding < 0.0:
+        raise ValueError("--collision-padding must be non-negative.")
+    if not 0.0 <= args.planner_goal_bias <= 1.0:
+        raise ValueError("--planner-goal-bias must be between 0 and 1.")
+    motion_planner = MotionPlannerConfig(
+        planner=args.planner,
+        timeout=args.planner_timeout,
+        step_size=args.planner_step_size,
+        collision_padding=args.collision_padding,
+        rng_seed=args.planner_seed,
+        goal_bias=args.planner_goal_bias,
+        debug=args.planner_debug,
+        pyroboplan_fallback=not args.no_pyroboplan_fallback,
+    )
 
     return PickupConfig(
         scene_path=args.scene,
@@ -1769,6 +1898,7 @@ def config_from_args(
         place_success_z_tolerance=args.place_success_z_tolerance,
         debug_camera_frame_dir=None if args.no_debug_camera_frames else args.debug_camera_frame_dir,
         allow_config_position_fallback=args.allow_config_cup_position_fallback,
+        motion_planner=motion_planner,
     )
 
 
