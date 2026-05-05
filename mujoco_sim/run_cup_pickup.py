@@ -17,6 +17,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from gripper import CLOSED_GRIPPER, OPEN_GRIPPER
 from motion import solve_ik
+from pose_estimation import TagPoseEstimate, detect_apriltags
 from sim_env import SimEnv, create_env
 from so101_mujoco_utils import JOINT_ORDER, convert_to_dictionary, send_position_command
 
@@ -33,6 +34,11 @@ DEFAULT_CUP_MASS = 0.025
 DEFAULT_SWEEP_JAW_FRICTIONS = (0.8, 1.0, 1.5, 2.0)
 DEFAULT_SWEEP_CUP_MASSES = (0.03, 0.045, 0.07)
 DEFAULT_SWEEP_GRIPPER_FORCES = (1.5, 2.0, 2.94)
+CUP_TAG_ID = 6
+CUP_TAG_SIZE = 0.024
+CUP_TAG_CAMERA_NAMES = ("table_observer", "cup_observer")
+CUP_DEBUG_FRAME_DIR = ROOT_DIR / "cup_camera_debug_frames"
+DEFAULT_TAG_TO_CUP_CENTER_OFFSET = (-0.067, 0.0, 0.026)
 
 
 @dataclass(frozen=True)
@@ -61,6 +67,11 @@ class PickupConfig:
     lift_duration: float = 1.5
     final_hold_duration: float = 1.0
     success_lift_delta: float = 0.035
+    cup_tag_id: int = CUP_TAG_ID
+    cup_tag_size: float = CUP_TAG_SIZE
+    tag_to_cup_center_offset: tuple[float, float, float] = DEFAULT_TAG_TO_CUP_CENTER_OFFSET
+    debug_camera_frame_dir: Path | None = CUP_DEBUG_FRAME_DIR
+    allow_config_position_fallback: bool = False
 
 
 @dataclass
@@ -128,6 +139,13 @@ class PickupResult:
     final_cup_z: float
     max_cup_z: float
     diagnostics: ContactDiagnostics
+
+
+@dataclass(frozen=True)
+class CupTargetPoints:
+    green_center: np.ndarray
+    blue_pregrasp: np.ndarray
+    tag_estimate: TagPoseEstimate | None
 
 
 def _object_name(model: mujoco.MjModel, obj_type: mujoco.mjtObj, obj_id: int) -> str:
@@ -326,19 +344,91 @@ def solve_target(env: SimEnv, xyz: np.ndarray, gripper_position: float) -> dict[
     return plan.target_position
 
 
-def show_first_waypoint(viewer: mujoco.viewer.Handle | None, xyz: np.ndarray) -> None:
+def estimate_cup_center_from_tag(env: SimEnv, config: PickupConfig) -> tuple[np.ndarray, TagPoseEstimate | None]:
+    try:
+        estimates = detect_apriltags(
+            env,
+            camera_name=CUP_TAG_CAMERA_NAMES[0],
+            tag_sizes={config.cup_tag_id: config.cup_tag_size},
+            camera_names=CUP_TAG_CAMERA_NAMES,
+            debug_frame_dir=config.debug_camera_frame_dir,
+        )
+    except Exception as exc:
+        if not config.allow_config_position_fallback:
+            raise
+        print(f"cup tag detection failed ({exc}); using configured cup position fallback")
+        return np.array(config.cup_position, dtype=float), None
+
+    estimate = estimates.get(config.cup_tag_id)
+    if estimate is None:
+        if config.allow_config_position_fallback:
+            print("cup tag not detected; using configured cup position fallback")
+            return np.array(config.cup_position, dtype=float), None
+        raise RuntimeError(
+            f"Cup AprilTag {config.cup_tag_id} was not detected from cameras: "
+            + ", ".join(CUP_TAG_CAMERA_NAMES)
+        )
+
+    tag_to_cup_center = np.asarray(config.tag_to_cup_center_offset, dtype=float)
+    if tag_to_cup_center.shape != (3,):
+        raise ValueError("tag_to_cup_center_offset must contain exactly three values.")
+
+    green_center = estimate.world_position + estimate.world_rotation @ tag_to_cup_center
+    print(
+        "cup tag: "
+        f"id={estimate.tag_id} camera={estimate.camera_name} "
+        f"tag=({estimate.world_position[0]:.4f}, {estimate.world_position[1]:.4f}, {estimate.world_position[2]:.4f}) m "
+        f"green_center=({green_center[0]:.4f}, {green_center[1]:.4f}, {green_center[2]:.4f}) m"
+    )
+    return green_center, estimate
+
+
+def target_points_from_cup_center(
+    green_center: np.ndarray,
+    config: PickupConfig,
+    tag_estimate: TagPoseEstimate | None,
+) -> CupTargetPoints:
+    cup_xy = np.array(green_center[:2], dtype=float)
+    radial_norm = np.linalg.norm(cup_xy)
+    if radial_norm == 0.0:
+        raise ValueError("Cup center must not be directly above the robot base.")
+    radial = cup_xy / radial_norm
+    left = np.array([-radial[1], radial[0]], dtype=float)
+    pregrasp_xy = cup_xy + radial * config.first_waypoint_forward_offset + left * config.first_waypoint_left_offset
+    blue_pregrasp = np.array([pregrasp_xy[0], pregrasp_xy[1], green_center[2]], dtype=float)
+    return CupTargetPoints(green_center=green_center, blue_pregrasp=blue_pregrasp, tag_estimate=tag_estimate)
+
+
+def estimate_cup_target_points(env: SimEnv, config: PickupConfig) -> CupTargetPoints:
+    green_center, tag_estimate = estimate_cup_center_from_tag(env, config)
+    return target_points_from_cup_center(green_center, config, tag_estimate)
+
+
+def show_cup_target_points(
+    viewer: mujoco.viewer.Handle | None,
+    green_center: np.ndarray,
+    blue_pregrasp: np.ndarray,
+) -> None:
     if viewer is None:
         return
 
     mujoco.mjv_initGeom(
         viewer.user_scn.geoms[0],
         type=mujoco.mjtGeom.mjGEOM_SPHERE,
+        size=[0.010, 0.0, 0.0],
+        pos=green_center,
+        mat=np.eye(3).flatten(),
+        rgba=[0.0, 1.0, 0.0, 0.55],
+    )
+    mujoco.mjv_initGeom(
+        viewer.user_scn.geoms[1],
+        type=mujoco.mjtGeom.mjGEOM_SPHERE,
         size=[0.008, 0.0, 0.0],
-        pos=xyz,
+        pos=blue_pregrasp,
         mat=np.eye(3).flatten(),
         rgba=[0.0, 0.2, 1.0, 0.75],
     )
-    viewer.user_scn.ngeom = 1
+    viewer.user_scn.ngeom = 2
     viewer.sync()
 
 
@@ -349,19 +439,13 @@ def execute_pickup(
     viewer: mujoco.viewer.Handle | None = None,
     realtime: bool = False,
 ) -> PickupResult:
-    cup_xy = np.array(config.cup_position[:2], dtype=float)
-    radial_norm = np.linalg.norm(cup_xy)
-    if radial_norm == 0.0:
-        raise ValueError("Cup position must not be directly above the robot base.")
-    radial = cup_xy / radial_norm
-    left = np.array([-radial[1], radial[0]], dtype=float)
-    pregrasp_xy = cup_xy + radial * config.first_waypoint_forward_offset + left * config.first_waypoint_left_offset
-    pregrasp_xyz = np.array([pregrasp_xy[0], pregrasp_xy[1], config.cup_position[2]], dtype=float)
+    target_points = estimate_cup_target_points(env, config)
+    pregrasp_xyz = target_points.blue_pregrasp
     approach_xyz = pregrasp_xyz + np.array([0.0, 0.0, config.approach_height], dtype=float)
     lift_xyz = pregrasp_xyz + np.array([0.0, 0.0, config.lift_height], dtype=float)
 
     initial_cup_z = float(env.data.xpos[diagnostics.cup_body_id, 2])
-    show_first_waypoint(viewer, pregrasp_xyz)
+    show_cup_target_points(viewer, target_points.green_center, pregrasp_xyz)
 
     approach_position = solve_target(env, approach_xyz, OPEN_GRIPPER)
     if not command_motion(env, approach_position, config.approach_duration, diagnostics, viewer, realtime):
@@ -461,6 +545,32 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--first-waypoint-left-offset", type=float, default=0.03, help="Meters to place the first low waypoint left from cup center.")
     parser.add_argument("--grasp-height", type=float, default=0.070, help="World z target for the claw center.")
     parser.add_argument("--lift-height", type=float, default=0.09, help="Meters to lift above the grasp target.")
+    parser.add_argument("--cup-tag-id", type=int, default=CUP_TAG_ID, help="AprilTag ID mounted on the cup.")
+    parser.add_argument("--cup-tag-size", type=float, default=CUP_TAG_SIZE, help="Black-square size of the cup AprilTag in meters.")
+    parser.add_argument(
+        "--tag-to-cup-center-offset",
+        type=float,
+        nargs=3,
+        default=DEFAULT_TAG_TO_CUP_CENTER_OFFSET,
+        metavar=("X", "Y", "Z"),
+        help="Fixed offset from cup AprilTag frame to green cup-center point in meters.",
+    )
+    parser.add_argument(
+        "--allow-config-cup-position-fallback",
+        action="store_true",
+        help="Use --cup-position if the cup AprilTag is not detected.",
+    )
+    parser.add_argument(
+        "--debug-camera-frame-dir",
+        type=Path,
+        default=CUP_DEBUG_FRAME_DIR,
+        help="Directory for rendered camera PNGs used during cup AprilTag detection.",
+    )
+    parser.add_argument(
+        "--no-debug-camera-frames",
+        action="store_true",
+        help="Do not save rendered camera PNGs during cup AprilTag detection.",
+    )
     return parser.parse_args()
 
 
@@ -488,6 +598,11 @@ def config_from_args(
         first_waypoint_left_offset=args.first_waypoint_left_offset,
         grasp_height=args.grasp_height,
         lift_height=args.lift_height,
+        cup_tag_id=args.cup_tag_id,
+        cup_tag_size=args.cup_tag_size,
+        tag_to_cup_center_offset=tuple(args.tag_to_cup_center_offset),
+        debug_camera_frame_dir=None if args.no_debug_camera_frames else args.debug_camera_frame_dir,
+        allow_config_position_fallback=args.allow_config_cup_position_fallback,
     )
 
 

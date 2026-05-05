@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import math
+import struct
+import zlib
+from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
 import mujoco  # type: ignore[import-not-found]
 import numpy as np  # type: ignore[import-not-found]
@@ -52,6 +56,28 @@ def render_camera(model: mujoco.MjModel, data: mujoco.MjData, camera_name: str, 
     with mujoco.Renderer(model, height=height, width=width) as renderer:
         renderer.update_scene(data, camera=camera_name)
         return renderer.render()
+
+
+def png_chunk(kind: bytes, payload: bytes) -> bytes:
+    checksum = zlib.crc32(kind + payload) & 0xFFFFFFFF
+    return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", checksum)
+
+
+def write_rgb_png(path: Path, image: np.ndarray) -> None:
+    if image.dtype != np.uint8 or image.ndim != 3 or image.shape[2] != 3:
+        raise ValueError("Expected an RGB uint8 image.")
+
+    height, width, _ = image.shape
+    raw_rows = b"".join(b"\x00" + image[row].tobytes() for row in range(height))
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    data = (
+        b"\x89PNG\r\n\x1a\n"
+        + png_chunk(b"IHDR", header)
+        + png_chunk(b"IDAT", zlib.compress(raw_rows, 9))
+        + png_chunk(b"IEND", b"")
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
 
 
 def camera_params_from_fovy(model: mujoco.MjModel, camera_id: int, width: int, height: int) -> tuple[float, float, float, float]:
@@ -139,27 +165,43 @@ def tag_pose_camera_to_world(
     )
 
 
-def camera_candidates(preferred_camera: str) -> tuple[str, ...]:
+def camera_candidates(preferred_camera: str, camera_names: tuple[str, ...] | None = None) -> tuple[str, ...]:
+    configured_cameras = camera_names or tuple(camera.name for camera in CAMERAS)
     candidates = [preferred_camera]
-    candidates.extend(camera.name for camera in CAMERAS if camera.name != preferred_camera)
+    candidates.extend(camera_name for camera_name in configured_cameras if camera_name != preferred_camera)
     return tuple(candidates)
 
 
-def tag_size_groups() -> dict[float, set[int]]:
+def tag_size_groups(tag_sizes: Mapping[int, float] | None = None) -> dict[float, set[int]]:
     groups: dict[float, set[int]] = {}
-    for tag in APRILTAGS:
-        groups.setdefault(tag.size_m, set()).add(tag.tag_id)
+    if tag_sizes is None:
+        tag_sizes = {tag.tag_id: tag.size_m for tag in APRILTAGS}
+    for tag_id, tag_size in tag_sizes.items():
+        groups.setdefault(float(tag_size), set()).add(int(tag_id))
     return groups
 
 
-def detect_apriltags(env: SimEnv, camera_name: str | None = None) -> dict[int, TagPoseEstimate]:
+def detect_apriltags(
+    env: SimEnv,
+    camera_name: str | None = None,
+    tag_sizes: Mapping[int, float] | None = None,
+    camera_names: tuple[str, ...] | None = None,
+    debug_frame_dir: Path | None = None,
+) -> dict[int, TagPoseEstimate]:
     preferred_camera = camera_name or env.camera_name
     estimates: dict[int, TagPoseEstimate] = {}
-    size_groups = tag_size_groups()
+    size_groups = tag_size_groups(tag_sizes)
+    target_ids = {tag_id for tag_ids in size_groups.values() for tag_id in tag_ids}
 
-    for candidate in camera_candidates(preferred_camera):
-        camera_id = require_named_id(env.model, mujoco.mjtObj.mjOBJ_CAMERA, candidate)
+    for candidate in camera_candidates(preferred_camera, camera_names):
+        if target_ids.issubset(estimates):
+            break
+        camera_id = mujoco.mj_name2id(env.model, mujoco.mjtObj.mjOBJ_CAMERA, candidate)
+        if camera_id < 0:
+            continue
         image = render_camera(env.model, env.data, candidate, env.render_width, env.render_height)
+        if debug_frame_dir is not None:
+            write_rgb_png(debug_frame_dir / f"{candidate}.png", image)
         camera_params = camera_params_from_fovy(env.model, camera_id, env.render_width, env.render_height)
         for tag_size, tag_ids in size_groups.items():
             remaining_ids = tag_ids.difference(estimates)
