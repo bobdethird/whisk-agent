@@ -117,6 +117,72 @@ To inspect the cup-pickup scene directly:
 mjpython -m mujoco.viewer --mjcf=simulation_code/model/scene_cup.xml
 ```
 
+## Run The Matcha Demo
+
+The matcha demo scene uses NVIDIA kitchen MJCF assets downloaded under `simulation_code/assets/nvidia_kitchen/` with a symlink at `simulation_code/model/assets/nvidia_kitchen/` so MuJoCo can resolve them through the SO-101 model asset directory.
+
+On macOS, open the scripted viewer demo with `mjpython`:
+
+```bash
+conda activate whisk-agent
+cd /path/to/agent-1
+mjpython mujoco_sim/run_matcha_demo.py
+```
+
+Run the same scripted sequence headless:
+
+```bash
+python mujoco_sim/run_matcha_demo.py --headless
+```
+
+Useful overrides:
+
+```bash
+python mujoco_sim/run_matcha_demo.py \
+  --headless \
+  --scene simulation_code/model/scene_matcha.xml \
+  --whisk-position 0.25 0.12 0.09 \
+  --main-cup-position 0.32 0.0 0.045 \
+  --whisk-stroke-length 0.035 \
+  --whisk-strokes 18
+```
+
+## Run The Matcha Plan On A Real SO-101 Follower
+
+`real_robot/run_matcha_real.py` reuses the matcha IK waypoints, but sends only joint-position commands to a calibrated LeRobot SO-101 follower arm. You do not need the leader arm for this runner; you only need the follower port and the same follower `id` used during calibration.
+
+Preview the hardware joint plan without moving the robot:
+
+```bash
+export SO101_PORT=/dev/tty.usbmodemYOUR_FOLLOWER_PORT
+export SO101_ID=your_existing_follower_id
+python real_robot/run_matcha_real.py --speed-scale 0.15
+```
+
+Move the real follower, slowly, with confirmation before every phase:
+
+```bash
+python real_robot/run_matcha_real.py \
+  --port "$SO101_PORT" \
+  --id "$SO101_ID" \
+  --speed-scale 0.15 \
+  --execute
+```
+
+The real-runner gripper defaults are `--open-gripper 0`, `--preclose-gripper 30`, and `--closed-gripper 100`. If your physical gripper moves the opposite way, swap `--open-gripper` and `--closed-gripper`. To test only the gripper without moving the arm joints, run:
+
+```bash
+python real_robot/run_matcha_real.py \
+  --port "$SO101_PORT" \
+  --id "$SO101_ID" \
+  --test-gripper \
+  --execute
+```
+
+If the gripper is still too narrow during the descent, move `--preclose-gripper` closer to your open value; if it misses the whisk when closing, move it closer to your closed value. The whisking motion includes a subtle `--whisk-vertical-amplitude 0.008` m upward lift on alternating strokes; raise it a little for more visible motion, or lower it if the whisk gets too close to the rim.
+
+Test in this order: no whisk/cup, then whisk only, then empty cup, then liquid. Keep the workspace clear and power/USB reachable while testing.
+
 ## Run The AprilTag Camera Demo
 
 Render the generated camera view and save it to `apriltag_camera_frame.png`:
