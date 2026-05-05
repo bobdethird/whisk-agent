@@ -266,6 +266,20 @@ class CupTargetPoints:
     tag_estimate: TagPoseEstimate | None
 
 
+@dataclass
+class AprilTagPoseCache:
+    estimates_by_tag_id: dict[int, TagPoseEstimate] = field(default_factory=dict)
+
+    def get_estimate(self, tag_id: int) -> TagPoseEstimate | None:
+        estimate = self.estimates_by_tag_id.get(tag_id)
+        if estimate is None:
+            return None
+        return _copy_tag_pose_estimate(estimate)
+
+    def update_estimate(self, estimate: TagPoseEstimate) -> None:
+        self.estimates_by_tag_id[estimate.tag_id] = _copy_tag_pose_estimate(estimate)
+
+
 @dataclass(frozen=True)
 class ViewerDebugOverlay:
     green_center: np.ndarray | None = None
@@ -313,6 +327,19 @@ def second_cup_spec(config: PickupConfig) -> CupSpec:
         tag_id=config.second_cup_tag_id,
         tag_to_cup_center_offset=config.tag_to_cup_center_offset,
     )
+
+
+def cup_apriltag_sizes(config: PickupConfig) -> dict[int, float]:
+    return {
+        config.cup_tag_id: config.cup_tag_size,
+        config.second_cup_tag_id: config.cup_tag_size,
+    }
+
+
+def scene_apriltag_sizes(config: PickupConfig) -> dict[int, float]:
+    tag_sizes = cup_apriltag_sizes(config)
+    tag_sizes[config.place_tag_id] = config.place_tag_size
+    return tag_sizes
 
 
 def _require_id(model: mujoco.MjModel, obj_type: mujoco.mjtObj, name: str) -> int:
@@ -593,25 +620,48 @@ def _detect_tag_estimates(
     tag_size: float,
     camera_names: tuple[str, ...],
     debug_frame_dir: Path | None,
+    tag_pose_cache: AprilTagPoseCache | None = None,
+    tag_sizes: dict[int, float] | None = None,
 ) -> list[TagPoseEstimate]:
     camera_names = tuple(dict.fromkeys(camera_name for camera_name in camera_names if camera_name))
     if not camera_names:
         raise ValueError("At least one AprilTag camera must be configured.")
 
+    requested_tag_sizes = {tag_id: tag_size} if tag_sizes is None else dict(tag_sizes)
+    requested_tag_sizes.setdefault(tag_id, tag_size)
     estimates: list[TagPoseEstimate] = []
+    estimates_by_tag_id: dict[int, list[TagPoseEstimate]] = {}
     for camera_name in camera_names:
         camera_estimates = detect_apriltags(
             env,
             camera_name=camera_name,
-            tag_sizes={tag_id: tag_size},
+            tag_sizes=requested_tag_sizes,
             camera_names=(camera_name,),
             debug_frame_dir=debug_frame_dir,
         )
+        for detected_estimate in camera_estimates.values():
+            estimates_by_tag_id.setdefault(detected_estimate.tag_id, []).append(detected_estimate)
         estimate = camera_estimates.get(tag_id)
         if estimate is not None:
             estimates.append(estimate)
 
+    if tag_pose_cache is not None:
+        for detected_estimates in estimates_by_tag_id.values():
+            tag_pose_cache.update_estimate(_fuse_equal_weight_tag_estimates(detected_estimates))
+
     return estimates
+
+
+def _copy_tag_pose_estimate(estimate: TagPoseEstimate) -> TagPoseEstimate:
+    return TagPoseEstimate(
+        tag_id=estimate.tag_id,
+        world_position=estimate.world_position.copy(),
+        world_rotation=estimate.world_rotation.copy(),
+        camera_position=estimate.camera_position.copy(),
+        pose_error=estimate.pose_error,
+        corners=estimate.corners.copy(),
+        camera_name=estimate.camera_name,
+    )
 
 
 def _estimate_for_offset_rotation(estimates: list[TagPoseEstimate]) -> TagPoseEstimate:
@@ -643,10 +693,19 @@ def _fuse_equal_weight_tag_estimates(estimates: list[TagPoseEstimate]) -> TagPos
     )
 
 
+def cup_center_from_tag_estimate(cup: CupSpec, estimate: TagPoseEstimate) -> np.ndarray:
+    tag_to_cup_center = np.asarray(cup.tag_to_cup_center_offset, dtype=float)
+    if tag_to_cup_center.shape != (3,):
+        raise ValueError("tag_to_cup_center_offset must contain exactly three values.")
+    return estimate.world_position + estimate.world_rotation @ tag_to_cup_center
+
+
 def estimate_cup_center_from_tag(
     env: SimEnv,
     config: PickupConfig,
     cup: CupSpec,
+    tag_pose_cache: AprilTagPoseCache | None = None,
+    use_cached_fallback: bool = True,
 ) -> tuple[np.ndarray, TagPoseEstimate | None]:
     try:
         estimates = _detect_tag_estimates(
@@ -655,14 +714,40 @@ def estimate_cup_center_from_tag(
             tag_size=config.cup_tag_size,
             camera_names=config.cup_tag_camera_names,
             debug_frame_dir=config.debug_camera_frame_dir,
+            tag_pose_cache=tag_pose_cache,
+            tag_sizes=cup_apriltag_sizes(config),
         )
     except Exception as exc:
+        cached_estimate = (
+            tag_pose_cache.get_estimate(cup.tag_id)
+            if tag_pose_cache is not None and use_cached_fallback
+            else None
+        )
+        if cached_estimate is not None:
+            green_center = cup_center_from_tag_estimate(cup, cached_estimate)
+            print(
+                f"{cup.label} tag detection failed ({exc}); "
+                f"using cached AprilTag {cup.tag_id} pose at {_format_xyz(cached_estimate.world_position)} m"
+            )
+            return green_center, cached_estimate
         if not config.allow_config_position_fallback:
             raise
         print(f"{cup.label} tag detection failed ({exc}); using configured cup position fallback")
         return np.array(cup.initial_position, dtype=float), None
 
     if not estimates:
+        cached_estimate = (
+            tag_pose_cache.get_estimate(cup.tag_id)
+            if tag_pose_cache is not None and use_cached_fallback
+            else None
+        )
+        if cached_estimate is not None:
+            green_center = cup_center_from_tag_estimate(cup, cached_estimate)
+            print(
+                f"{cup.label} tag not detected; "
+                f"using cached AprilTag {cup.tag_id} pose at {_format_xyz(cached_estimate.world_position)} m"
+            )
+            return green_center, cached_estimate
         if config.allow_config_position_fallback:
             print(f"{cup.label} tag not detected; using configured cup position fallback")
             return np.array(cup.initial_position, dtype=float), None
@@ -672,11 +757,7 @@ def estimate_cup_center_from_tag(
         )
 
     estimate = _fuse_equal_weight_tag_estimates(estimates)
-    tag_to_cup_center = np.asarray(cup.tag_to_cup_center_offset, dtype=float)
-    if tag_to_cup_center.shape != (3,):
-        raise ValueError("tag_to_cup_center_offset must contain exactly three values.")
-
-    green_center = estimate.world_position + estimate.world_rotation @ tag_to_cup_center
+    green_center = cup_center_from_tag_estimate(cup, estimate)
     print(
         f"{cup.label} tag: "
         f"id={estimate.tag_id} cameras={estimate.camera_name} "
@@ -694,10 +775,24 @@ def estimate_cup_center_from_tag(
             f"tag={_format_xyz(contributor.world_position)} m "
             f"error={contributor.pose_error:.6f}"
         )
+    if tag_pose_cache is not None:
+        tag_pose_cache.update_estimate(estimate)
     return green_center, estimate
 
 
-def estimate_place_target_center(env: SimEnv, config: PickupConfig) -> tuple[np.ndarray, TagPoseEstimate | None]:
+def place_target_center_from_tag_estimate(config: PickupConfig, estimate: TagPoseEstimate) -> np.ndarray:
+    return np.array(
+        [estimate.world_position[0], estimate.world_position[1], config.cup_half_height],
+        dtype=float,
+    )
+
+
+def estimate_place_target_center(
+    env: SimEnv,
+    config: PickupConfig,
+    tag_pose_cache: AprilTagPoseCache | None = None,
+    use_cached_fallback: bool = True,
+) -> tuple[np.ndarray, TagPoseEstimate | None]:
     try:
         estimates = _detect_tag_estimates(
             env,
@@ -705,8 +800,23 @@ def estimate_place_target_center(env: SimEnv, config: PickupConfig) -> tuple[np.
             tag_size=config.place_tag_size,
             camera_names=config.place_tag_camera_names,
             debug_frame_dir=config.debug_camera_frame_dir,
+            tag_pose_cache=tag_pose_cache,
+            tag_sizes=scene_apriltag_sizes(config),
         )
     except Exception as exc:
+        cached_estimate = (
+            tag_pose_cache.get_estimate(config.place_tag_id)
+            if tag_pose_cache is not None and use_cached_fallback
+            else None
+        )
+        if cached_estimate is not None:
+            target_center = place_target_center_from_tag_estimate(config, cached_estimate)
+            print(
+                f"place tag detection failed ({exc}); "
+                f"using cached AprilTag {config.place_tag_id} pose at "
+                f"{_format_xyz(cached_estimate.world_position)} m"
+            )
+            return target_center, cached_estimate
         if not config.allow_config_position_fallback:
             raise
         print(f"place tag detection failed ({exc}); using configured place tag fallback")
@@ -714,6 +824,18 @@ def estimate_place_target_center(env: SimEnv, config: PickupConfig) -> tuple[np.
         return np.array([place_tag[0], place_tag[1], config.cup_half_height], dtype=float), None
 
     if not estimates:
+        cached_estimate = (
+            tag_pose_cache.get_estimate(config.place_tag_id)
+            if tag_pose_cache is not None and use_cached_fallback
+            else None
+        )
+        if cached_estimate is not None:
+            target_center = place_target_center_from_tag_estimate(config, cached_estimate)
+            print(
+                f"place tag not detected; using cached AprilTag {config.place_tag_id} "
+                f"pose at {_format_xyz(cached_estimate.world_position)} m"
+            )
+            return target_center, cached_estimate
         if config.allow_config_position_fallback:
             print("place tag not detected; using configured place tag fallback")
             place_tag = np.array(config.place_tag_position, dtype=float)
@@ -724,16 +846,15 @@ def estimate_place_target_center(env: SimEnv, config: PickupConfig) -> tuple[np.
         )
 
     estimate = _fuse_equal_weight_tag_estimates(estimates)
-    target_center = np.array(
-        [estimate.world_position[0], estimate.world_position[1], config.cup_half_height],
-        dtype=float,
-    )
+    target_center = place_target_center_from_tag_estimate(config, estimate)
     print(
         "place tag: "
         f"id={estimate.tag_id} cameras={estimate.camera_name} "
         f"tag={_format_xyz(estimate.world_position)} m "
         f"cup_center_target={_format_xyz(target_center)} m"
     )
+    if tag_pose_cache is not None:
+        tag_pose_cache.update_estimate(estimate)
     return target_center, estimate
 
 
@@ -754,9 +875,21 @@ def target_points_from_cup_center(
     return CupTargetPoints(green_center=green_center, blue_pregrasp=blue_pregrasp, tag_estimate=tag_estimate)
 
 
-def estimate_cup_target_points(env: SimEnv, config: PickupConfig, cup: CupSpec | None = None) -> CupTargetPoints:
+def estimate_cup_target_points(
+    env: SimEnv,
+    config: PickupConfig,
+    cup: CupSpec | None = None,
+    tag_pose_cache: AprilTagPoseCache | None = None,
+    use_cached_fallback: bool = True,
+) -> CupTargetPoints:
     cup = primary_cup_spec(config) if cup is None else cup
-    green_center, tag_estimate = estimate_cup_center_from_tag(env, config, cup)
+    green_center, tag_estimate = estimate_cup_center_from_tag(
+        env,
+        config,
+        cup,
+        tag_pose_cache=tag_pose_cache,
+        use_cached_fallback=use_cached_fallback,
+    )
     return target_points_from_cup_center(green_center, config, tag_estimate)
 
 
@@ -910,11 +1043,12 @@ def execute_pickup(
     config: PickupConfig,
     diagnostics: ContactDiagnostics,
     cup: CupSpec | None = None,
+    tag_pose_cache: AprilTagPoseCache | None = None,
     viewer: mujoco.viewer.Handle | None = None,
     realtime: bool = False,
 ) -> PickupResult:
     cup = primary_cup_spec(config) if cup is None else cup
-    target_points = estimate_cup_target_points(env, config, cup)
+    target_points = estimate_cup_target_points(env, config, cup, tag_pose_cache=tag_pose_cache)
     pregrasp_xyz = target_points.blue_pregrasp
     approach_xyz = pregrasp_xyz + np.array([0.0, 0.0, config.approach_height], dtype=float)
     lift_xyz = pregrasp_xyz + np.array([0.0, 0.0, config.lift_height], dtype=float)
@@ -1187,6 +1321,35 @@ def _stack_target_center(env: SimEnv, config: PickupConfig, lower_cup_diagnostic
     )
 
 
+def warm_apriltag_pose_cache(
+    env: SimEnv,
+    config: PickupConfig,
+    cups: tuple[CupSpec, ...],
+    tag_pose_cache: AprilTagPoseCache,
+) -> None:
+    try:
+        estimate_place_target_center(
+            env,
+            config,
+            tag_pose_cache=tag_pose_cache,
+            use_cached_fallback=False,
+        )
+    except RuntimeError as exc:
+        print(f"place tag initial detection did not cache a pose ({exc})")
+
+    for cup in cups:
+        try:
+            estimate_cup_target_points(
+                env,
+                config,
+                cup,
+                tag_pose_cache=tag_pose_cache,
+                use_cached_fallback=False,
+            )
+        except RuntimeError as exc:
+            print(f"{cup.label} initial tag detection did not cache a pose ({exc})")
+
+
 def execute_pick_place_stack_sequence(
     env: SimEnv,
     config: PickupConfig,
@@ -1198,9 +1361,19 @@ def execute_pick_place_stack_sequence(
     second_cup = second_cup_spec(config)
     first_diagnostics = diagnostics_by_label[first_cup.label]
     second_diagnostics = diagnostics_by_label[second_cup.label]
+    tag_pose_cache = AprilTagPoseCache()
 
-    ground_target_center, _ = estimate_place_target_center(env, config)
-    first_pickup = execute_pickup(env, config, first_diagnostics, first_cup, viewer=viewer, realtime=realtime)
+    warm_apriltag_pose_cache(env, config, (first_cup, second_cup), tag_pose_cache)
+    ground_target_center, _ = estimate_place_target_center(env, config, tag_pose_cache=tag_pose_cache)
+    first_pickup = execute_pickup(
+        env,
+        config,
+        first_diagnostics,
+        first_cup,
+        tag_pose_cache=tag_pose_cache,
+        viewer=viewer,
+        realtime=realtime,
+    )
     if not first_pickup.success:
         return CupStackSequenceResult(first_pickup, None, None, None)
 
@@ -1216,7 +1389,15 @@ def execute_pick_place_stack_sequence(
     if not first_place.success:
         return CupStackSequenceResult(first_pickup, first_place, None, None)
 
-    second_pickup = execute_pickup(env, config, second_diagnostics, second_cup, viewer=viewer, realtime=realtime)
+    second_pickup = execute_pickup(
+        env,
+        config,
+        second_diagnostics,
+        second_cup,
+        tag_pose_cache=tag_pose_cache,
+        viewer=viewer,
+        realtime=realtime,
+    )
     if not second_pickup.success:
         return CupStackSequenceResult(first_pickup, first_place, second_pickup, None)
 
