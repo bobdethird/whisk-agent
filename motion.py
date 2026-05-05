@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import mujoco  # type: ignore[import-not-found]
 import numpy as np  # type: ignore[import-not-found]
 
-from sim_env import SimEnv
+from sim_env import HORIZONTAL_WRIST_ROLL_DEGREES, SimEnv
 from so101_kinematics import pose_from_position_rotation, rotation_error_rad
 from so101_mujoco_utils import move_to_pose
 
@@ -33,6 +33,7 @@ def _target_xyz(xyz: np.ndarray | tuple[float, float, float] | list[float]) -> n
 def solve_ik(env: SimEnv, xyz: np.ndarray | tuple[float, float, float] | list[float], gripper_position: float | None = None) -> IKPlan:
     target = _target_xyz(xyz)
     current_position = dict(env.current_position)
+    current_position["wrist_roll"] = HORIZONTAL_WRIST_ROLL_DEGREES
     current_pose = env.kinematics.forward_kinematics(current_position, frame="mujoco")
     target_pose = pose_from_position_rotation(target, current_pose[:3, :3])
     target_position = env.kinematics.inverse_kinematics(
@@ -43,6 +44,7 @@ def solve_ik(env: SimEnv, xyz: np.ndarray | tuple[float, float, float] | list[fl
         gripper=current_position["gripper"] if gripper_position is None else float(gripper_position),
         max_iterations=DEFAULT_MAX_ITERATIONS,
     )
+    target_position["wrist_roll"] = HORIZONTAL_WRIST_ROLL_DEGREES
     solved_pose = env.kinematics.forward_kinematics(target_position, frame="mujoco")
     return IKPlan(
         target_pose=target_pose,

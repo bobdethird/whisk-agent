@@ -18,13 +18,14 @@ DEFAULT_CAMERA = "table_observer"
 DEFAULT_TAG_X_RANGE = (0.30, 0.46)
 DEFAULT_TAG_Y_RANGE = (-0.12, 0.08)
 DEFAULT_TAG_MIN_SPACING_M = 0.055
+HORIZONTAL_WRIST_ROLL_DEGREES = 90.0
 
 STARTING_POSITION = {
     "shoulder_pan": 0.0,
     "shoulder_lift": -45.0,
     "elbow_flex": 90.0,
     "wrist_flex": -45.0,
-    "wrist_roll": 0.0,
+    "wrist_roll": HORIZONTAL_WRIST_ROLL_DEGREES,
     "gripper": 50.0,
 }
 
