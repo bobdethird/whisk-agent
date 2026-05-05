@@ -8,27 +8,19 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from sim_env import HORIZONTAL_WRIST_ROLL_DEGREES, STARTING_POSITION
 from so101_mujoco_utils import hold_position, move_to_pose, set_initial_pose
 
 
 MODEL_PATH = ROOT_DIR / "simulation_code" / "model" / "scene.xml"
-
-STARTING_POSITION = {
-    "shoulder_pan": 0.0,
-    "shoulder_lift": -45.0,
-    "elbow_flex": 90.0,
-    "wrist_flex": -45.0,
-    "wrist_roll": 0.0,
-    "gripper": 0.0,
-}
 
 DESIRED_POSITION = {
     "shoulder_pan": 0.0,
     "shoulder_lift": 0.0,
     "elbow_flex": 0.0,
     "wrist_flex": 0.0,
-    "wrist_roll": 0.0,
-    "gripper": 0.0,
+    "wrist_roll": HORIZONTAL_WRIST_ROLL_DEGREES,
+    "gripper": STARTING_POSITION["gripper"],
 }
 
 

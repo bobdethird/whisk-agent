@@ -164,8 +164,8 @@ STARTING_POSITION = {
     "shoulder_lift": -45.0,
     "elbow_flex": 90.0,
     "wrist_flex": -45.0,
-    "wrist_roll": 0.0,
-    "gripper": 0.0,
+    "wrist_roll": -90.0,
+    "gripper": 50.0,
 }
 ```
 
@@ -177,9 +177,11 @@ The local adapter in `so101_kinematics.py` keeps the same joint dictionary conve
 
 - Arm joints are in degrees.
 - `gripper` is preserved as a `0..100` command value.
-- FK/IK poses default to MuJoCo's `gripperframe` site convention.
+- FK/IK poses default to MuJoCo Menagerie's `gripperframe` site convention.
 
-LeRobot's URDF frame and MuJoCo's `gripperframe` site share the same origin, but their local axes differ by a fixed rotation. The adapter applies that correction so validation and IK targets line up with the simulation.
+LeRobot's URDF frame and MuJoCo Menagerie's `gripperframe` site differ by a fixed rotation and a small translation. The adapter applies both corrections so validation and IK targets line up with the simulation.
+
+High-level `move(...)` commands target the visible claw/pinch point rather than the internal `gripperframe` site. The motion layer applies the Menagerie fingertip offset and then refines IK with the wrist roll locked at the standard `-90°` camera-on-top orientation.
 
 Validate LeRobot/Placo FK against MuJoCo:
 
@@ -252,4 +254,4 @@ If the viewer fails on macOS, use `mjpython` instead of `python`:
 mjpython mujoco_sim/run_mujoco_simulation.py
 ```
 
-If MuJoCo cannot find meshes, confirm that `scene.xml`, `so101_new_calib.xml`, and the `assets/` folder are all inside `simulation_code/model/`.
+If MuJoCo cannot find meshes, confirm that `scene.xml`, `so101.xml`, and the `assets/` folder are all inside `simulation_code/model/`.

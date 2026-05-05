@@ -25,6 +25,10 @@ URDF_TO_MUJOCO_GRIPPERFRAME_ROTATION = np.array(
 # The Menagerie SO-101 model places gripperframe at the pinch/contact frame,
 # about 2 cm forward from LeRobot's URDF target frame in MuJoCo-frame +Z.
 URDF_TO_MUJOCO_GRIPPERFRAME_OFFSET = np.array([0.0, 0.0, 0.0199], dtype=float)
+# Offset from Menagerie's gripperframe site to the center of the claw contact
+# points when the gripper is closed. Motion commands use this as the user-facing
+# tool point so the visible claw, not the internal site, lands on targets.
+MUJOCO_GRIPPERFRAME_TO_CLAW_TARGET_OFFSET = np.array([0.0007, 0.0001, -0.0120], dtype=float)
 
 
 def _require_pose_matrix(pose: np.ndarray) -> np.ndarray:
@@ -131,6 +135,18 @@ def translated_pose(pose: np.ndarray, offset_xyz: np.ndarray) -> np.ndarray:
     if offset_xyz.shape != (3,):
         raise ValueError(f"Expected offset shape (3,), got {offset_xyz.shape}.")
     pose[:3, 3] += offset_xyz
+    return pose
+
+
+def gripperframe_pose_to_claw_target_pose(pose: np.ndarray) -> np.ndarray:
+    pose = _require_pose_matrix(pose).copy()
+    pose[:3, 3] += pose[:3, :3] @ MUJOCO_GRIPPERFRAME_TO_CLAW_TARGET_OFFSET
+    return pose
+
+
+def claw_target_pose_to_gripperframe_pose(pose: np.ndarray) -> np.ndarray:
+    pose = _require_pose_matrix(pose).copy()
+    pose[:3, 3] -= pose[:3, :3] @ MUJOCO_GRIPPERFRAME_TO_CLAW_TARGET_OFFSET
     return pose
 
 
