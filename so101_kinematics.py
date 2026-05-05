@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 import numpy as np  # type: ignore[import-not-found]
 from lerobot.model.kinematics import RobotKinematics  # type: ignore[import-not-found]
@@ -12,6 +13,9 @@ TARGET_FRAME_NAME = "gripper_frame_link"
 MUJOCO_SITE_NAME = "gripperframe"
 ARM_JOINT_ORDER = JOINT_ORDER[:-1]
 GRIPPER_JOINT = JOINT_ORDER[-1]
+ToolPointName = Literal["claw_center", "fixed_jaw_tip"]
+CLAW_CENTER_TOOL_POINT: ToolPointName = "claw_center"
+FIXED_JAW_TOOL_POINT: ToolPointName = "fixed_jaw_tip"
 
 # LeRobot's URDF frame and MuJoCo's gripperframe site use different local axes.
 URDF_TO_MUJOCO_GRIPPERFRAME_ROTATION = np.array(
@@ -29,6 +33,13 @@ URDF_TO_MUJOCO_GRIPPERFRAME_OFFSET = np.array([0.0, 0.0, 0.0199], dtype=float)
 # points when the gripper is closed. Motion commands use this as the user-facing
 # tool point so the visible claw, not the internal site, lands on targets.
 MUJOCO_GRIPPERFRAME_TO_CLAW_TARGET_OFFSET = np.array([0.0007, 0.0001, -0.0120], dtype=float)
+# Offset from gripperframe to the stationary jaw's central fingertip sphere
+# (`fixed_jaw_sph_tip1`) in gripperframe-local axes.
+MUJOCO_GRIPPERFRAME_TO_FIXED_JAW_TARGET_OFFSET = np.array([0.002873, 0.000218, -0.0201], dtype=float)
+MUJOCO_GRIPPERFRAME_TOOL_OFFSETS: dict[ToolPointName, np.ndarray] = {
+    CLAW_CENTER_TOOL_POINT: MUJOCO_GRIPPERFRAME_TO_CLAW_TARGET_OFFSET,
+    FIXED_JAW_TOOL_POINT: MUJOCO_GRIPPERFRAME_TO_FIXED_JAW_TARGET_OFFSET,
+}
 
 
 def _require_pose_matrix(pose: np.ndarray) -> np.ndarray:
@@ -138,16 +149,37 @@ def translated_pose(pose: np.ndarray, offset_xyz: np.ndarray) -> np.ndarray:
     return pose
 
 
-def gripperframe_pose_to_claw_target_pose(pose: np.ndarray) -> np.ndarray:
+def tool_point_offset(tool_point: ToolPointName = CLAW_CENTER_TOOL_POINT) -> np.ndarray:
+    try:
+        return MUJOCO_GRIPPERFRAME_TOOL_OFFSETS[tool_point]
+    except KeyError as exc:
+        raise ValueError(f"Unknown tool point {tool_point!r}.") from exc
+
+
+def gripperframe_pose_to_tool_target_pose(
+    pose: np.ndarray,
+    tool_point: ToolPointName = CLAW_CENTER_TOOL_POINT,
+) -> np.ndarray:
     pose = _require_pose_matrix(pose).copy()
-    pose[:3, 3] += pose[:3, :3] @ MUJOCO_GRIPPERFRAME_TO_CLAW_TARGET_OFFSET
+    pose[:3, 3] += pose[:3, :3] @ tool_point_offset(tool_point)
     return pose
+
+
+def tool_target_pose_to_gripperframe_pose(
+    pose: np.ndarray,
+    tool_point: ToolPointName = CLAW_CENTER_TOOL_POINT,
+) -> np.ndarray:
+    pose = _require_pose_matrix(pose).copy()
+    pose[:3, 3] -= pose[:3, :3] @ tool_point_offset(tool_point)
+    return pose
+
+
+def gripperframe_pose_to_claw_target_pose(pose: np.ndarray) -> np.ndarray:
+    return gripperframe_pose_to_tool_target_pose(pose, CLAW_CENTER_TOOL_POINT)
 
 
 def claw_target_pose_to_gripperframe_pose(pose: np.ndarray) -> np.ndarray:
-    pose = _require_pose_matrix(pose).copy()
-    pose[:3, 3] -= pose[:3, :3] @ MUJOCO_GRIPPERFRAME_TO_CLAW_TARGET_OFFSET
-    return pose
+    return tool_target_pose_to_gripperframe_pose(pose, CLAW_CENTER_TOOL_POINT)
 
 
 def rotation_error_rad(rotation_a: np.ndarray, rotation_b: np.ndarray) -> float:

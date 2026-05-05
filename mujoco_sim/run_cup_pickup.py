@@ -39,6 +39,7 @@ from mujoco_sim.cup_scene_config import (
 )
 from pose_estimation import TagPoseEstimate, detect_apriltags
 from sim_env import SimEnv, create_env
+from so101_kinematics import CLAW_CENTER_TOOL_POINT, FIXED_JAW_TOOL_POINT, ToolPointName
 from so101_mujoco_utils import JOINT_ORDER, convert_to_dictionary, send_position_command
 
 
@@ -52,9 +53,14 @@ MOVING_JAW_BODY_NAME = "moving_jaw_so101_v1"
 DEFAULT_CUP_POSITION = PRIMARY_CUP.initial_position
 DEFAULT_SECOND_CUP_POSITION = SECOND_CUP.initial_position
 DEFAULT_PLACE_TAG_POSITION = PLACE_TAG.pos
+PLACE_TAG_BODY_NAME = PLACE_TAG.name
 DEFAULT_SWEEP_JAW_FRICTIONS = (0.8, 1.0, 1.5, 2.0)
 DEFAULT_SWEEP_CUP_MASSES = (0.03, 0.045, 0.07)
 DEFAULT_SWEEP_GRIPPER_FORCES = (1.5, 2.0, 2.94)
+DEFAULT_FIRST_WAYPOINT_CLEARANCE = 0.005
+DEFAULT_SCENE_RANDOM_X_RANGE = (0.25, 0.38)
+DEFAULT_SCENE_RANDOM_Y_RANGE = (-0.18, 0.08)
+DEFAULT_SCENE_RANDOM_MIN_SPACING = 0.09
 PLACE_TAG_ID = PLACE_TAG.tag_id
 SECOND_CUP_TAG_ID = SECOND_CUP.tag.tag_id
 CUP_TAG_ID = PRIMARY_CUP.tag.tag_id
@@ -63,6 +69,8 @@ DEFAULT_TAG_TO_CUP_CENTER_OFFSET = CUP_TAG_TO_CUP_CENTER_OFFSET
 CAMERA_FOV_VISUALIZATION_DISTANCE = 0.25
 CAMERA_FOV_VISUALIZATION_ASPECT = 4.0 / 3.0
 CAMERA_FOV_LINE_RADIUS = 0.001
+ESTIMATED_CENTER_MARKER_RADIUS = 0.0035
+BLUE_MARKER_RADIUS = 0.005
 
 
 @dataclass(frozen=True)
@@ -78,11 +86,11 @@ class PickupConfig:
     cup_friction: tuple[float, float, float] = DEFAULT_CUP_FRICTION
     jaw_friction: tuple[float, float, float] = DEFAULT_JAW_FRICTION
     gripper_force: float = 1.5
+    ik_tool_point: ToolPointName = FIXED_JAW_TOOL_POINT
     approach_height: float = 0.07
     side_grasp_offset: float = 0.004
     lateral_grasp_offset: float = 0.005
-    first_waypoint_forward_offset: float = 0.02
-    first_waypoint_left_offset: float = 0.03
+    first_waypoint_clearance: float = DEFAULT_FIRST_WAYPOINT_CLEARANCE
     grasp_height: float = 0.070
     lift_height: float = 0.09
     approach_duration: float = 2.0
@@ -102,11 +110,14 @@ class PickupConfig:
     place_tag_position: tuple[float, float, float] = DEFAULT_PLACE_TAG_POSITION
     place_tag_camera_names: tuple[str, ...] = PLACE_TAG_CAMERA_NAMES
     place_approach_height: float = 0.08
+    release_clearance: float = 0.03
+    release_contact_settle_duration: float = 0.25
     place_lateral_retreat: float = 0.06
     place_success_xy_tolerance: float = 0.04
     place_success_z_tolerance: float = 0.04
     debug_camera_frame_dir: Path | None = CUP_DEBUG_FRAME_DIR
     allow_config_position_fallback: bool = False
+    apriltag_refresh_interval: float = 0.25
 
 
 @dataclass(frozen=True)
@@ -181,6 +192,32 @@ class ContactDiagnostics:
             self.both_jaw_contact_steps += 1
 
 
+def current_gripper_cup_contacts(env: SimEnv, diagnostics: ContactDiagnostics) -> list[tuple[str, str]]:
+    contacts: list[tuple[str, str]] = []
+    gripper_body_ids = {diagnostics.fixed_jaw_body_id, diagnostics.moving_jaw_body_id}
+    for contact_index in range(env.data.ncon):
+        contact = env.data.contact[contact_index]
+        geom1 = int(contact.geom1)
+        geom2 = int(contact.geom2)
+        if geom1 in diagnostics.cup_geom_ids:
+            cup_geom_id, other_geom_id = geom1, geom2
+        elif geom2 in diagnostics.cup_geom_ids:
+            cup_geom_id, other_geom_id = geom2, geom1
+        else:
+            continue
+
+        other_body_id = int(env.model.geom_bodyid[other_geom_id])
+        if other_body_id not in gripper_body_ids:
+            continue
+        contacts.append(
+            (
+                _object_name(env.model, mujoco.mjtObj.mjOBJ_GEOM, cup_geom_id),
+                _object_name(env.model, mujoco.mjtObj.mjOBJ_GEOM, other_geom_id),
+            )
+        )
+    return contacts
+
+
 @dataclass(frozen=True)
 class PickupResult:
     success: bool
@@ -228,6 +265,21 @@ class CupTargetPoints:
     green_center: np.ndarray
     blue_pregrasp: np.ndarray
     tag_estimate: TagPoseEstimate | None
+
+
+@dataclass(frozen=True)
+class CupPoseObservation:
+    center: np.ndarray
+    tag_estimate: TagPoseEstimate
+    observed_at: float
+
+
+@dataclass
+class AprilTagTrackingState:
+    config: PickupConfig
+    cups: tuple[CupSpec, ...]
+    latest_cup_observations: dict[str, CupPoseObservation] = field(default_factory=dict)
+    last_refresh_time: float = -math.inf
 
 
 @dataclass(frozen=True)
@@ -297,6 +349,10 @@ def _body_geom_ids(model: mujoco.MjModel, body_id: int, contact_only: bool = Fal
     return geom_ids
 
 
+def _format_position(position: tuple[float, float, float]) -> str:
+    return f"x={position[0]:.4f} y={position[1]:.4f} z={position[2]:.4f}"
+
+
 def _set_freejoint_pose(
     model: mujoco.MjModel,
     data: mujoco.MjData,
@@ -309,6 +365,12 @@ def _set_freejoint_pose(
     data.qpos[qpos_address : qpos_address + 7] = [*position, 1.0, 0.0, 0.0, 0.0]
     data.qvel[qvel_address : qvel_address + 6] = 0.0
     mujoco.mj_forward(model, data)
+
+
+def configure_place_tag(env: SimEnv, config: PickupConfig) -> None:
+    body_id = _require_id(env.model, mujoco.mjtObj.mjOBJ_BODY, PLACE_TAG_BODY_NAME)
+    env.model.body_pos[body_id] = np.asarray(config.place_tag_position, dtype=float)
+    mujoco.mj_forward(env.model, env.data)
 
 
 def _scale_body_mass(model: mujoco.MjModel, body_id: int, target_mass: float) -> None:
@@ -395,8 +457,18 @@ def configure_cups(env: SimEnv, config: PickupConfig) -> dict[str, ContactDiagno
     return {cup.label: configure_cup(env, config, cup) for cup in cups}
 
 
+def configure_scene(env: SimEnv, config: PickupConfig) -> dict[str, ContactDiagnostics]:
+    configure_place_tag(env, config)
+    diagnostics = configure_cups(env, config)
+    print("Scene object positions:")
+    print(f"  first cup: {_format_position(config.cup_position)}")
+    print(f"  second cup: {_format_position(config.second_cup_position)}")
+    print(f"  placement tag: {_format_position(config.place_tag_position)}")
+    return diagnostics
+
+
 def configure_pickup_env(env: SimEnv, config: PickupConfig) -> ContactDiagnostics:
-    return configure_cups(env, config)[primary_cup_spec(config).label]
+    return configure_scene(env, config)[primary_cup_spec(config).label]
 
 
 def _interpolate_position(
@@ -416,10 +488,12 @@ def _step_once(
     viewer: mujoco.viewer.Handle | None,
     realtime: bool,
     debug_overlay: ViewerDebugOverlay | None = None,
+    tracking: AprilTagTrackingState | None = None,
 ) -> bool:
     step_start = time.time()
     mujoco.mj_step(env.model, env.data)
     diagnostics.update(env.data)
+    _refresh_apriltag_tracking(env, tracking)
 
     if viewer is not None:
         if debug_overlay is not None:
@@ -443,6 +517,7 @@ def command_motion(
     viewer: mujoco.viewer.Handle | None = None,
     realtime: bool = False,
     debug_overlay: ViewerDebugOverlay | None = None,
+    tracking: AprilTagTrackingState | None = None,
 ) -> bool:
     start_position = convert_to_dictionary(env.data.qpos.copy())
     steps = max(1, math.ceil(duration / env.model.opt.timestep))
@@ -451,7 +526,7 @@ def command_motion(
         alpha = (step_index + 1) / steps
         command = _interpolate_position(start_position, target_position, alpha)
         send_position_command(env.data, command)
-        if not _step_once(env, diagnostics, viewer, realtime, debug_overlay):
+        if not _step_once(env, diagnostics, viewer, realtime, debug_overlay, tracking):
             return False
 
     env.current_position = dict(target_position)
@@ -466,23 +541,58 @@ def hold_command(
     viewer: mujoco.viewer.Handle | None = None,
     realtime: bool = False,
     debug_overlay: ViewerDebugOverlay | None = None,
+    tracking: AprilTagTrackingState | None = None,
 ) -> bool:
     steps = max(1, math.ceil(duration / env.model.opt.timestep))
     for _ in range(steps):
         send_position_command(env.data, target_position)
-        if not _step_once(env, diagnostics, viewer, realtime, debug_overlay):
+        if not _step_once(env, diagnostics, viewer, realtime, debug_overlay, tracking):
             return False
     env.current_position = dict(target_position)
     return True
 
 
-def solve_target(env: SimEnv, xyz: np.ndarray, gripper_position: float) -> dict[str, float]:
-    plan = solve_ik(env, xyz, gripper_position=gripper_position)
+def hold_until_gripper_cup_contacts_clear(
+    env: SimEnv,
+    target_position: dict[str, float],
+    duration: float,
+    diagnostics: ContactDiagnostics,
+    viewer: mujoco.viewer.Handle | None = None,
+    realtime: bool = False,
+    debug_overlay: ViewerDebugOverlay | None = None,
+    tracking: AprilTagTrackingState | None = None,
+) -> bool:
+    steps = max(1, math.ceil(duration / env.model.opt.timestep))
+    for _ in range(steps):
+        if not current_gripper_cup_contacts(env, diagnostics):
+            env.current_position = dict(target_position)
+            return True
+        send_position_command(env.data, target_position)
+        if not _step_once(env, diagnostics, viewer, realtime, debug_overlay, tracking):
+            return False
+
+    env.current_position = dict(target_position)
+    remaining_contacts = current_gripper_cup_contacts(env, diagnostics)
+    if remaining_contacts:
+        print(
+            f"{diagnostics.cup_label} release still touches gripper after opening: "
+            + ", ".join(f"{cup}<->{gripper}" for cup, gripper in remaining_contacts)
+        )
+    return not remaining_contacts
+
+
+def solve_target(
+    env: SimEnv,
+    xyz: np.ndarray,
+    gripper_position: float,
+    tool_point: ToolPointName,
+) -> dict[str, float]:
+    plan = solve_ik(env, xyz, gripper_position=gripper_position, tool_point=tool_point)
     target = plan.target_pose[:3, 3]
     print(
         "target: "
         f"x={target[0]:.4f} y={target[1]:.4f} z={target[2]:.4f} m, "
-        f"gripper={gripper_position:.1f}, IK error={plan.position_error:.6f} m"
+        f"gripper={gripper_position:.1f}, tool={tool_point}, IK error={plan.position_error:.6f} m"
     )
     return plan.target_position
 
@@ -554,45 +664,60 @@ def _fuse_equal_weight_tag_estimates(estimates: list[TagPoseEstimate]) -> TagPos
     )
 
 
-def estimate_cup_center_from_tag(
+def _cup_observation_from_estimates(
     env: SimEnv,
-    config: PickupConfig,
     cup: CupSpec,
-) -> tuple[np.ndarray, TagPoseEstimate | None]:
-    try:
-        estimates = _detect_tag_estimates(
-            env,
-            tag_id=cup.tag_id,
-            tag_size=config.cup_tag_size,
-            camera_names=config.cup_tag_camera_names,
-            debug_frame_dir=config.debug_camera_frame_dir,
-        )
-    except Exception as exc:
-        if not config.allow_config_position_fallback:
-            raise
-        print(f"{cup.label} tag detection failed ({exc}); using configured cup position fallback")
-        return np.array(cup.initial_position, dtype=float), None
-
-    if not estimates:
-        if config.allow_config_position_fallback:
-            print(f"{cup.label} tag not detected; using configured cup position fallback")
-            return np.array(cup.initial_position, dtype=float), None
-        raise RuntimeError(
-            f"{cup.label.title()} AprilTag {cup.tag_id} was not detected from cameras: "
-            + ", ".join(config.cup_tag_camera_names)
-        )
-
+    estimates: list[TagPoseEstimate],
+) -> CupPoseObservation:
     estimate = _fuse_equal_weight_tag_estimates(estimates)
     tag_to_cup_center = np.asarray(cup.tag_to_cup_center_offset, dtype=float)
     if tag_to_cup_center.shape != (3,):
         raise ValueError("tag_to_cup_center_offset must contain exactly three values.")
 
     green_center = estimate.world_position + estimate.world_rotation @ tag_to_cup_center
+    return CupPoseObservation(
+        center=green_center,
+        tag_estimate=estimate,
+        observed_at=float(env.data.time),
+    )
+
+
+def _detect_cup_observation(env: SimEnv, config: PickupConfig, cup: CupSpec) -> tuple[CupPoseObservation | None, list[TagPoseEstimate]]:
+    estimates = _detect_tag_estimates(
+        env,
+        tag_id=cup.tag_id,
+        tag_size=config.cup_tag_size,
+        camera_names=config.cup_tag_camera_names,
+        debug_frame_dir=config.debug_camera_frame_dir,
+    )
+    if not estimates:
+        return None, estimates
+    return _cup_observation_from_estimates(env, cup, estimates), estimates
+
+
+def _remember_cup_observation(tracking: AprilTagTrackingState | None, cup: CupSpec, observation: CupPoseObservation) -> None:
+    if tracking is not None:
+        tracking.latest_cup_observations[cup.label] = observation
+
+
+def _latest_cup_observation(tracking: AprilTagTrackingState | None, cup: CupSpec) -> CupPoseObservation | None:
+    if tracking is None:
+        return None
+    return tracking.latest_cup_observations.get(cup.label)
+
+
+def _print_cup_observation(
+    env: SimEnv,
+    cup: CupSpec,
+    observation: CupPoseObservation,
+    estimates: list[TagPoseEstimate],
+) -> None:
+    estimate = observation.tag_estimate
     print(
         f"{cup.label} tag: "
         f"id={estimate.tag_id} cameras={estimate.camera_name} "
         f"tag={_format_xyz(estimate.world_position)} m "
-        f"green_center={_format_xyz(green_center)} m"
+        f"green_center={_format_xyz(observation.center)} m"
     )
     if len(estimates) > 1:
         print(f"  fused {len(estimates)} camera estimates with equal weights")
@@ -605,7 +730,64 @@ def estimate_cup_center_from_tag(
             f"tag={_format_xyz(contributor.world_position)} m "
             f"error={contributor.pose_error:.6f}"
         )
-    return green_center, estimate
+
+
+def _refresh_apriltag_tracking(env: SimEnv, tracking: AprilTagTrackingState | None, force: bool = False) -> None:
+    if tracking is None:
+        return
+
+    now = float(env.data.time)
+    interval = max(0.0, tracking.config.apriltag_refresh_interval)
+    if not force and now - tracking.last_refresh_time < interval:
+        return
+
+    tracking.last_refresh_time = now
+    for cup in tracking.cups:
+        try:
+            observation, _ = _detect_cup_observation(env, tracking.config, cup)
+        except Exception:
+            continue
+        if observation is not None:
+            tracking.latest_cup_observations[cup.label] = observation
+
+
+def estimate_cup_center_from_tag(
+    env: SimEnv,
+    config: PickupConfig,
+    cup: CupSpec,
+    tracking: AprilTagTrackingState | None = None,
+) -> tuple[np.ndarray, TagPoseEstimate | None]:
+    try:
+        observation, estimates = _detect_cup_observation(env, config, cup)
+    except Exception as exc:
+        latest_observation = _latest_cup_observation(tracking, cup)
+        if latest_observation is not None:
+            print(
+                f"{cup.label} tag detection failed ({exc}); "
+                f"using latest tracked pose from t={latest_observation.observed_at:.3f}s"
+            )
+            return latest_observation.center.copy(), latest_observation.tag_estimate
+        if not config.allow_config_position_fallback:
+            raise
+        print(f"{cup.label} tag detection failed ({exc}); using configured cup position fallback")
+        return np.array(cup.initial_position, dtype=float), None
+
+    if observation is None:
+        latest_observation = _latest_cup_observation(tracking, cup)
+        if latest_observation is not None:
+            print(f"{cup.label} tag not detected; using latest tracked pose from t={latest_observation.observed_at:.3f}s")
+            return latest_observation.center.copy(), latest_observation.tag_estimate
+        if config.allow_config_position_fallback:
+            print(f"{cup.label} tag not detected; using configured cup position fallback")
+            return np.array(cup.initial_position, dtype=float), None
+        raise RuntimeError(
+            f"{cup.label.title()} AprilTag {cup.tag_id} was not detected from cameras: "
+            + ", ".join(config.cup_tag_camera_names)
+        )
+
+    _remember_cup_observation(tracking, cup, observation)
+    _print_cup_observation(env, cup, observation, estimates)
+    return observation.center.copy(), observation.tag_estimate
 
 
 def estimate_place_target_center(env: SimEnv, config: PickupConfig) -> tuple[np.ndarray, TagPoseEstimate | None]:
@@ -659,14 +841,20 @@ def target_points_from_cup_center(
         raise ValueError("Cup center must not be directly above the robot base.")
     radial = cup_xy / radial_norm
     left = np.array([-radial[1], radial[0]], dtype=float)
-    pregrasp_xy = cup_xy + radial * config.first_waypoint_forward_offset + left * config.first_waypoint_left_offset
+    waypoint_offset = config.cup_radius + config.first_waypoint_clearance
+    pregrasp_xy = cup_xy + radial * waypoint_offset + left * waypoint_offset
     blue_pregrasp = np.array([pregrasp_xy[0], pregrasp_xy[1], green_center[2]], dtype=float)
     return CupTargetPoints(green_center=green_center, blue_pregrasp=blue_pregrasp, tag_estimate=tag_estimate)
 
 
-def estimate_cup_target_points(env: SimEnv, config: PickupConfig, cup: CupSpec | None = None) -> CupTargetPoints:
+def estimate_cup_target_points(
+    env: SimEnv,
+    config: PickupConfig,
+    cup: CupSpec | None = None,
+    tracking: AprilTagTrackingState | None = None,
+) -> CupTargetPoints:
     cup = primary_cup_spec(config) if cup is None else cup
-    green_center, tag_estimate = estimate_cup_center_from_tag(env, config, cup)
+    green_center, tag_estimate = estimate_cup_center_from_tag(env, config, cup, tracking=tracking)
     return target_points_from_cup_center(green_center, config, tag_estimate)
 
 
@@ -796,9 +984,21 @@ def refresh_viewer_debug_overlays(
 ) -> None:
     geom_index = 0
     if overlay.green_center is not None:
-        geom_index = _add_debug_sphere(viewer, geom_index, overlay.green_center, 0.010, [0.0, 1.0, 0.0, 0.55])
+        geom_index = _add_debug_sphere(
+            viewer,
+            geom_index,
+            overlay.green_center,
+            ESTIMATED_CENTER_MARKER_RADIUS,
+            [0.6, 0.0, 1.0, 0.8],
+        )
     if overlay.blue_pregrasp is not None:
-        geom_index = _add_debug_sphere(viewer, geom_index, overlay.blue_pregrasp, 0.008, [0.0, 0.2, 1.0, 0.75])
+        geom_index = _add_debug_sphere(
+            viewer,
+            geom_index,
+            overlay.blue_pregrasp,
+            BLUE_MARKER_RADIUS,
+            [0.0, 0.2, 1.0, 0.75],
+        )
     geom_index = _add_camera_fov_overlays(viewer, env, geom_index, overlay.camera_names)
     viewer.user_scn.ngeom = geom_index
 
@@ -810,9 +1010,10 @@ def execute_pickup(
     cup: CupSpec | None = None,
     viewer: mujoco.viewer.Handle | None = None,
     realtime: bool = False,
+    tracking: AprilTagTrackingState | None = None,
 ) -> PickupResult:
     cup = primary_cup_spec(config) if cup is None else cup
-    target_points = estimate_cup_target_points(env, config, cup)
+    target_points = estimate_cup_target_points(env, config, cup, tracking=tracking)
     pregrasp_xyz = target_points.blue_pregrasp
     approach_xyz = pregrasp_xyz + np.array([0.0, 0.0, config.approach_height], dtype=float)
     lift_xyz = pregrasp_xyz + np.array([0.0, 0.0, config.lift_height], dtype=float)
@@ -831,7 +1032,7 @@ def execute_pickup(
         config.cup_tag_camera_names,
     )
 
-    approach_position = solve_target(env, approach_xyz, OPEN_GRIPPER)
+    approach_position = solve_target(env, approach_xyz, OPEN_GRIPPER, config.ik_tool_point)
     if not command_motion(
         env,
         approach_position,
@@ -840,10 +1041,11 @@ def execute_pickup(
         viewer,
         realtime,
         debug_overlay,
+        tracking,
     ):
         return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
 
-    pregrasp_position = solve_target(env, pregrasp_xyz, OPEN_GRIPPER)
+    pregrasp_position = solve_target(env, pregrasp_xyz, OPEN_GRIPPER, config.ik_tool_point)
     if not command_motion(
         env,
         pregrasp_position,
@@ -852,6 +1054,7 @@ def execute_pickup(
         viewer,
         realtime,
         debug_overlay,
+        tracking,
     ):
         return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
 
@@ -865,6 +1068,7 @@ def execute_pickup(
         viewer,
         realtime,
         debug_overlay,
+        tracking,
     ):
         return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
     if not hold_command(
@@ -875,10 +1079,11 @@ def execute_pickup(
         viewer,
         realtime,
         debug_overlay,
+        tracking,
     ):
         return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
 
-    lift_position = solve_target(env, lift_xyz, CLOSED_GRIPPER)
+    lift_position = solve_target(env, lift_xyz, CLOSED_GRIPPER, config.ik_tool_point)
     if not command_motion(
         env,
         lift_position,
@@ -887,6 +1092,7 @@ def execute_pickup(
         viewer,
         realtime,
         debug_overlay,
+        tracking,
     ):
         return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
     hold_command(
@@ -897,6 +1103,7 @@ def execute_pickup(
         viewer,
         realtime,
         debug_overlay,
+        tracking,
     )
     return _pickup_result(env, config, diagnostics, initial_cup_z, target_points)
 
@@ -909,6 +1116,7 @@ def execute_place(
     target_center: np.ndarray,
     viewer: mujoco.viewer.Handle | None = None,
     realtime: bool = False,
+    tracking: AprilTagTrackingState | None = None,
 ) -> PlacementResult:
     release_xyz = target_center + pickup_result.grasp_offset
     approach_xyz = release_xyz + np.array([0.0, 0.0, config.place_approach_height], dtype=float)
@@ -921,7 +1129,7 @@ def execute_place(
         refresh_viewer_debug_overlays(viewer, env, debug_overlay)
         viewer.sync()
 
-    approach_position = solve_target(env, approach_xyz, CLOSED_GRIPPER)
+    approach_position = solve_target(env, approach_xyz, CLOSED_GRIPPER, config.ik_tool_point)
     if not command_motion(
         env,
         approach_position,
@@ -930,10 +1138,11 @@ def execute_place(
         viewer,
         realtime,
         debug_overlay,
+        tracking,
     ):
         return _placement_result(env, config, diagnostics, target_center)
 
-    release_position = solve_target(env, release_xyz, CLOSED_GRIPPER)
+    release_position = solve_target(env, release_xyz, CLOSED_GRIPPER, config.ik_tool_point)
     if not command_motion(
         env,
         release_position,
@@ -942,11 +1151,19 @@ def execute_place(
         viewer,
         realtime,
         debug_overlay,
+        tracking,
     ):
         return _placement_result(env, config, diagnostics, target_center)
 
-    open_position = dict(release_position)
-    open_position["gripper"] = OPEN_GRIPPER
+    retreat_xy = pickup_result.grasp_offset[:2]
+    retreat_norm = np.linalg.norm(retreat_xy)
+    retreat_direction = retreat_xy / retreat_norm if retreat_norm > 1e-6 else None
+
+    release_clear_xyz = release_xyz.copy()
+    if retreat_direction is not None:
+        release_clear_xyz[:2] += retreat_direction * config.release_clearance
+
+    open_position = solve_target(env, release_clear_xyz, OPEN_GRIPPER, config.ik_tool_point)
     if not command_motion(
         env,
         open_position,
@@ -955,40 +1172,24 @@ def execute_place(
         viewer,
         realtime,
         debug_overlay,
+        tracking,
     ):
         return _placement_result(env, config, diagnostics, target_center)
-    if not hold_command(
+    if not hold_until_gripper_cup_contacts_clear(
         env,
         open_position,
-        config.squeeze_duration,
+        max(config.squeeze_duration, config.release_contact_settle_duration),
         diagnostics,
         viewer,
         realtime,
         debug_overlay,
+        tracking,
     ):
         return _placement_result(env, config, diagnostics, target_center)
 
-    retreat_xy = pickup_result.grasp_offset[:2]
-    retreat_norm = np.linalg.norm(retreat_xy)
-    lateral_retreat_xyz = release_xyz.copy()
-    if retreat_norm > 1e-6:
-        lateral_retreat_xyz[:2] += retreat_xy / retreat_norm * config.place_lateral_retreat
-
-    lateral_retreat_position = solve_target(env, lateral_retreat_xyz, OPEN_GRIPPER)
+    retreat_xyz = release_clear_xyz + np.array([0.0, 0.0, config.place_approach_height], dtype=float)
+    retreat_position = solve_target(env, retreat_xyz, OPEN_GRIPPER, config.ik_tool_point)
     if not command_motion(
-        env,
-        lateral_retreat_position,
-        config.descend_duration,
-        diagnostics,
-        viewer,
-        realtime,
-        debug_overlay,
-    ):
-        return _placement_result(env, config, diagnostics, target_center)
-
-    retreat_xyz = lateral_retreat_xyz + np.array([0.0, 0.0, config.place_approach_height], dtype=float)
-    retreat_position = solve_target(env, retreat_xyz, OPEN_GRIPPER)
-    command_motion(
         env,
         retreat_position,
         config.lift_duration,
@@ -996,15 +1197,35 @@ def execute_place(
         viewer,
         realtime,
         debug_overlay,
-    )
+        tracking,
+    ):
+        return _placement_result(env, config, diagnostics, target_center)
+
+    final_retreat_position = retreat_position
+    if retreat_direction is not None and config.place_lateral_retreat > config.release_clearance:
+        elevated_lateral_retreat_xyz = retreat_xyz.copy()
+        elevated_lateral_retreat_xyz[:2] = release_xyz[:2] + retreat_direction * config.place_lateral_retreat
+        final_retreat_position = solve_target(env, elevated_lateral_retreat_xyz, OPEN_GRIPPER, config.ik_tool_point)
+        command_motion(
+            env,
+            final_retreat_position,
+            config.descend_duration,
+            diagnostics,
+            viewer,
+            realtime,
+            debug_overlay,
+            tracking,
+        )
+
     hold_command(
         env,
-        retreat_position,
+        final_retreat_position,
         config.final_hold_duration,
         diagnostics,
         viewer,
         realtime,
         debug_overlay,
+        tracking,
     )
     return _placement_result(env, config, diagnostics, target_center)
 
@@ -1052,21 +1273,33 @@ def _placement_result(
 def run_pickup(config: PickupConfig, launch_viewer: bool) -> PickupResult:
     env = create_env(scene_path=config.scene_path)
     diagnostics = configure_pickup_env(env, config)
+    tracking = AprilTagTrackingState(config=config, cups=(primary_cup_spec(config),))
+    _refresh_apriltag_tracking(env, tracking, force=True)
 
     if not launch_viewer:
-        return execute_pickup(env, config, diagnostics, realtime=False)
+        return execute_pickup(env, config, diagnostics, realtime=False, tracking=tracking)
 
     with mujoco.viewer.launch_passive(env.model, env.data) as viewer:
         env.viewer = viewer
-        return execute_pickup(env, config, diagnostics, viewer=viewer, realtime=True)
+        return execute_pickup(env, config, diagnostics, viewer=viewer, realtime=True, tracking=tracking)
 
 
-def _stack_target_center(env: SimEnv, config: PickupConfig, lower_cup_diagnostics: ContactDiagnostics) -> np.ndarray:
-    lower_center = env.data.xpos[lower_cup_diagnostics.cup_body_id].copy()
-    return np.array(
+def _stack_target_center(
+    env: SimEnv,
+    config: PickupConfig,
+    lower_cup: CupSpec,
+    tracking: AprilTagTrackingState,
+) -> np.ndarray:
+    lower_center, _ = estimate_cup_center_from_tag(env, config, lower_cup, tracking=tracking)
+    target_center = np.array(
         [lower_center[0], lower_center[1], lower_center[2] + 2.0 * config.cup_half_height],
         dtype=float,
     )
+    print(
+        f"stack target from latest {lower_cup.label} AprilTag: "
+        f"lower_center={_format_xyz(lower_center)} m target={_format_xyz(target_center)} m"
+    )
+    return target_center
 
 
 def execute_pick_place_stack_sequence(
@@ -1080,9 +1313,19 @@ def execute_pick_place_stack_sequence(
     second_cup = second_cup_spec(config)
     first_diagnostics = diagnostics_by_label[first_cup.label]
     second_diagnostics = diagnostics_by_label[second_cup.label]
+    tracking = AprilTagTrackingState(config=config, cups=(first_cup, second_cup))
+    _refresh_apriltag_tracking(env, tracking, force=True)
 
     ground_target_center, _ = estimate_place_target_center(env, config)
-    first_pickup = execute_pickup(env, config, first_diagnostics, first_cup, viewer=viewer, realtime=realtime)
+    first_pickup = execute_pickup(
+        env,
+        config,
+        first_diagnostics,
+        first_cup,
+        viewer=viewer,
+        realtime=realtime,
+        tracking=tracking,
+    )
     if not first_pickup.success:
         return CupStackSequenceResult(first_pickup, None, None, None)
 
@@ -1094,15 +1337,26 @@ def execute_pick_place_stack_sequence(
         ground_target_center,
         viewer=viewer,
         realtime=realtime,
+        tracking=tracking,
     )
     if not first_place.success:
         return CupStackSequenceResult(first_pickup, first_place, None, None)
 
-    second_pickup = execute_pickup(env, config, second_diagnostics, second_cup, viewer=viewer, realtime=realtime)
+    estimate_cup_center_from_tag(env, config, first_cup, tracking=tracking)
+
+    second_pickup = execute_pickup(
+        env,
+        config,
+        second_diagnostics,
+        second_cup,
+        viewer=viewer,
+        realtime=realtime,
+        tracking=tracking,
+    )
     if not second_pickup.success:
         return CupStackSequenceResult(first_pickup, first_place, second_pickup, None)
 
-    stack_target_center = _stack_target_center(env, config, first_diagnostics)
+    stack_target_center = _stack_target_center(env, config, first_cup, tracking)
     stack_place = execute_place(
         env,
         config,
@@ -1111,13 +1365,14 @@ def execute_pick_place_stack_sequence(
         stack_target_center,
         viewer=viewer,
         realtime=realtime,
+        tracking=tracking,
     )
     return CupStackSequenceResult(first_pickup, first_place, second_pickup, stack_place)
 
 
 def run_pick_place_stack_sequence(config: PickupConfig, launch_viewer: bool) -> CupStackSequenceResult:
     env = create_env(scene_path=config.scene_path)
-    diagnostics_by_label = configure_cups(env, config)
+    diagnostics_by_label = configure_scene(env, config)
 
     if not launch_viewer:
         return execute_pick_place_stack_sequence(env, config, diagnostics_by_label, realtime=False)
@@ -1183,6 +1438,96 @@ def parse_friction(values: list[float]) -> tuple[float, float, float]:
     return float(values[0]), float(values[1]), float(values[2])
 
 
+def _configured_or_default(
+    configured: list[float] | tuple[float, ...] | None,
+    default: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    if configured is None:
+        return default
+    return float(configured[0]), float(configured[1]), float(configured[2])
+
+
+def _range_pair(name: str, values: list[float] | tuple[float, ...]) -> tuple[float, float]:
+    lower, upper = float(values[0]), float(values[1])
+    if lower >= upper:
+        raise ValueError(f"{name} lower bound must be less than upper bound.")
+    return lower, upper
+
+
+def _sample_spaced_scene_position(
+    rng: np.random.Generator,
+    existing_positions: list[tuple[float, float, float]],
+    z: float,
+    x_range: tuple[float, float],
+    y_range: tuple[float, float],
+    min_spacing: float,
+    label: str,
+) -> tuple[float, float, float]:
+    max_attempts = 2000
+    for _ in range(max_attempts):
+        candidate = (
+            float(rng.uniform(*x_range)),
+            float(rng.uniform(*y_range)),
+            float(z),
+        )
+        if all(
+            np.linalg.norm(np.asarray(candidate[:2]) - np.asarray(position[:2])) >= min_spacing
+            for position in existing_positions
+        ):
+            return candidate
+    raise RuntimeError(f"Could not place {label} without overlap; widen the randomization ranges.")
+
+
+def scene_positions_from_args(
+    args: argparse.Namespace,
+) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
+    position_specs = (
+        ("first cup", "cup_position", DEFAULT_CUP_POSITION),
+        ("second cup", "second_cup_position", DEFAULT_SECOND_CUP_POSITION),
+        ("placement tag", "place_tag_position", DEFAULT_PLACE_TAG_POSITION),
+    )
+    if args.fixed_scene_positions:
+        fixed_positions = tuple(
+            _configured_or_default(getattr(args, arg_name), default)
+            for _, arg_name, default in position_specs
+        )
+        return fixed_positions[0], fixed_positions[1], fixed_positions[2]
+
+    x_range = _range_pair("--scene-random-x-range", args.scene_random_x_range)
+    y_range = _range_pair("--scene-random-y-range", args.scene_random_y_range)
+    if args.scene_random_min_spacing < 0.0:
+        raise ValueError("--scene-random-min-spacing must be non-negative.")
+
+    rng = np.random.default_rng(args.random_seed)
+    positions: dict[str, tuple[float, float, float]] = {}
+    existing_positions: list[tuple[float, float, float]] = []
+
+    for label, arg_name, default in position_specs:
+        configured = getattr(args, arg_name)
+        if configured is None:
+            continue
+        position = _configured_or_default(configured, default)
+        positions[label] = position
+        existing_positions.append(position)
+
+    for label, _, default in position_specs:
+        if label in positions:
+            continue
+        position = _sample_spaced_scene_position(
+            rng,
+            existing_positions,
+            z=default[2],
+            x_range=x_range,
+            y_range=y_range,
+            min_spacing=args.scene_random_min_spacing,
+            label=label,
+        )
+        positions[label] = position
+        existing_positions.append(position)
+
+    return positions["first cup"], positions["second cup"], positions["placement tag"]
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a focused SO101 cup pickup test in MuJoCo.")
     parser.add_argument("--scene", type=Path, default=MODEL_PATH, help="MJCF scene to load.")
@@ -1197,23 +1542,74 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cup-radius", type=float, default=DEFAULT_CUP_RADIUS, help="Cup side collision radius in meters.")
     parser.add_argument("--cup-mass", type=float, default=DEFAULT_CUP_MASS, help="Cup mass in kg.")
     parser.add_argument("--gripper-force", type=float, default=1.5, help="Symmetric gripper actuator force range.")
+    parser.add_argument(
+        "--ik-tool-point",
+        choices=(CLAW_CENTER_TOOL_POINT, FIXED_JAW_TOOL_POINT),
+        default=FIXED_JAW_TOOL_POINT,
+        help="Tool point to place on IK targets; use claw_center to compare against the previous behavior.",
+    )
     parser.add_argument("--cup-friction", type=float, nargs=3, default=DEFAULT_CUP_FRICTION, metavar=("SLIDE", "TORSION", "ROLL"))
     parser.add_argument("--jaw-friction", type=float, nargs=3, default=DEFAULT_JAW_FRICTION, metavar=("SLIDE", "TORSION", "ROLL"))
     parser.add_argument("--sweep-jaw-friction", type=float, nargs="*", default=list(DEFAULT_SWEEP_JAW_FRICTIONS))
     parser.add_argument("--sweep-cup-mass", type=float, nargs="*", default=list(DEFAULT_SWEEP_CUP_MASSES))
     parser.add_argument("--sweep-gripper-force", type=float, nargs="*", default=list(DEFAULT_SWEEP_GRIPPER_FORCES))
-    parser.add_argument("--cup-position", type=float, nargs=3, default=DEFAULT_CUP_POSITION, metavar=("X", "Y", "Z"))
+    parser.add_argument(
+        "--cup-position",
+        type=float,
+        nargs=3,
+        default=None,
+        metavar=("X", "Y", "Z"),
+        help="Fixed first cup position. Defaults to a randomized position each run.",
+    )
     parser.add_argument(
         "--second-cup-position",
         type=float,
         nargs=3,
-        default=DEFAULT_SECOND_CUP_POSITION,
+        default=None,
         metavar=("X", "Y", "Z"),
+        help="Fixed second cup position. Defaults to a randomized position each run.",
+    )
+    parser.add_argument(
+        "--fixed-scene-positions",
+        action="store_true",
+        help="Use configured/default cup and placement tag positions instead of randomizing unspecified positions.",
+    )
+    parser.add_argument(
+        "--random-seed",
+        type=int,
+        default=None,
+        help="Seed for randomized cup and placement tag positions.",
+    )
+    parser.add_argument(
+        "--scene-random-x-range",
+        type=float,
+        nargs=2,
+        default=DEFAULT_SCENE_RANDOM_X_RANGE,
+        metavar=("MIN", "MAX"),
+        help="World x range for randomized cup and placement tag positions.",
+    )
+    parser.add_argument(
+        "--scene-random-y-range",
+        type=float,
+        nargs=2,
+        default=DEFAULT_SCENE_RANDOM_Y_RANGE,
+        metavar=("MIN", "MAX"),
+        help="World y range for randomized cup and placement tag positions.",
+    )
+    parser.add_argument(
+        "--scene-random-min-spacing",
+        type=float,
+        default=DEFAULT_SCENE_RANDOM_MIN_SPACING,
+        help="Minimum xy spacing between randomized scene objects.",
     )
     parser.add_argument("--side-grasp-offset", type=float, default=0.004, help="Meters to offset target toward the robot from cup center.")
     parser.add_argument("--lateral-grasp-offset", type=float, default=0.005, help="Meters to offset final grasp target left of cup center.")
-    parser.add_argument("--first-waypoint-forward-offset", type=float, default=0.02, help="Meters to place the first low waypoint forward from cup center.")
-    parser.add_argument("--first-waypoint-left-offset", type=float, default=0.03, help="Meters to place the first low waypoint left from cup center.")
+    parser.add_argument(
+        "--first-waypoint-clearance",
+        type=float,
+        default=DEFAULT_FIRST_WAYPOINT_CLEARANCE,
+        help="Meters beyond the cup radius to place the first low waypoint forward and left.",
+    )
     parser.add_argument("--grasp-height", type=float, default=0.070, help="World z target for the claw center.")
     parser.add_argument("--lift-height", type=float, default=0.09, help="Meters to lift above the grasp target.")
     parser.add_argument("--cup-tag-id", type=int, default=CUP_TAG_ID, help="AprilTag ID mounted on the cup.")
@@ -1232,9 +1628,9 @@ def parse_args() -> argparse.Namespace:
         "--place-tag-position",
         type=float,
         nargs=3,
-        default=DEFAULT_PLACE_TAG_POSITION,
+        default=None,
         metavar=("X", "Y", "Z"),
-        help="Configured placement tag position used only when fallback is enabled.",
+        help="Fixed placement tag position. Defaults to a randomized position each run.",
     )
     parser.add_argument(
         "--place-tag-cameras",
@@ -1244,6 +1640,18 @@ def parse_args() -> argparse.Namespace:
         help="Named MuJoCo cameras to use for flat placement tag detection.",
     )
     parser.add_argument("--place-approach-height", type=float, default=0.08, help="Meters to retreat above each placement target.")
+    parser.add_argument(
+        "--release-clearance",
+        type=float,
+        default=0.03,
+        help="Meters to back away from the cup while opening the gripper.",
+    )
+    parser.add_argument(
+        "--release-contact-settle-duration",
+        type=float,
+        default=0.25,
+        help="Seconds to keep the gripper open while waiting for cup-gripper contacts to clear.",
+    )
     parser.add_argument("--place-lateral-retreat", type=float, default=0.06, help="Meters to move away from a placed cup before lifting the open gripper.")
     parser.add_argument("--place-success-xy-tolerance", type=float, default=0.04, help="Allowed horizontal placement error in meters.")
     parser.add_argument("--place-success-z-tolerance", type=float, default=0.04, help="Allowed vertical placement error in meters.")
@@ -1259,6 +1667,12 @@ def parse_args() -> argparse.Namespace:
         "--allow-config-cup-position-fallback",
         action="store_true",
         help="Use --cup-position if the cup AprilTag is not detected.",
+    )
+    parser.add_argument(
+        "--apriltag-refresh-interval",
+        type=float,
+        default=0.25,
+        help="Seconds of simulation time between background cup AprilTag pose refreshes; use 0 to refresh every step.",
     )
     parser.add_argument(
         "--debug-camera-frame-dir",
@@ -1283,20 +1697,21 @@ def config_from_args(
     jaw_friction = tuple(args.jaw_friction)
     if jaw_sliding_friction is not None:
         jaw_friction = (jaw_sliding_friction, jaw_friction[1], jaw_friction[2])
+    cup_position, second_cup_position, place_tag_position = scene_positions_from_args(args)
 
     return PickupConfig(
         scene_path=args.scene,
-        cup_position=tuple(args.cup_position),
-        second_cup_position=tuple(args.second_cup_position),
+        cup_position=cup_position,
+        second_cup_position=second_cup_position,
         cup_radius=args.cup_radius,
         cup_mass=args.cup_mass if cup_mass is None else cup_mass,
         cup_friction=tuple(args.cup_friction),
         jaw_friction=jaw_friction,
         gripper_force=args.gripper_force if gripper_force is None else gripper_force,
+        ik_tool_point=args.ik_tool_point,
         side_grasp_offset=args.side_grasp_offset,
         lateral_grasp_offset=args.lateral_grasp_offset,
-        first_waypoint_forward_offset=args.first_waypoint_forward_offset,
-        first_waypoint_left_offset=args.first_waypoint_left_offset,
+        first_waypoint_clearance=args.first_waypoint_clearance,
         grasp_height=args.grasp_height,
         lift_height=args.lift_height,
         cup_tag_id=args.cup_tag_id,
@@ -1306,14 +1721,17 @@ def config_from_args(
         tag_to_cup_center_offset=tuple(args.tag_to_cup_center_offset),
         place_tag_id=args.place_tag_id,
         place_tag_size=args.place_tag_size,
-        place_tag_position=tuple(args.place_tag_position),
+        place_tag_position=place_tag_position,
         place_tag_camera_names=tuple(args.place_tag_cameras),
         place_approach_height=args.place_approach_height,
+        release_clearance=args.release_clearance,
+        release_contact_settle_duration=args.release_contact_settle_duration,
         place_lateral_retreat=args.place_lateral_retreat,
         place_success_xy_tolerance=args.place_success_xy_tolerance,
         place_success_z_tolerance=args.place_success_z_tolerance,
         debug_camera_frame_dir=None if args.no_debug_camera_frames else args.debug_camera_frame_dir,
         allow_config_position_fallback=args.allow_config_cup_position_fallback,
+        apriltag_refresh_interval=args.apriltag_refresh_interval,
     )
 
 

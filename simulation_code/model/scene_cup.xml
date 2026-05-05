@@ -42,7 +42,7 @@
         <body name="cup" pos="0.32 0 0.045">
             <freejoint name="cup_freejoint" />
             <geom name="cup_side_collision" type="cylinder" size="0.023 0.045" mass="0.025" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.75 1 0.35" />
-            <geom name="cup_rim_collision" type="cylinder" size="0.03 0.004" pos="0 0 0.041" density="0" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.75 1 0.35" />
+            <geom name="cup_rim_collision" type="cylinder" size="0.023 0.004" pos="0 0 0.041" density="0" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.75 1 0.35" />
             <geom name="cup_visual" type="cylinder" size="0.0235 0.0455" material="cup_material" contype="0" conaffinity="0" density="0" />
             <site name="cup_site" pos="0 0 0" size="0.006" rgba="0 1 0 0.5" />
             <body name="cup_tag36h11_00006" pos="-0.026 0 0" quat="0.7071067812 0 -0.7071067812 0">
@@ -53,7 +53,7 @@
         <body name="second_cup" pos="0.32 -0.14 0.045">
             <freejoint name="second_cup_freejoint" />
             <geom name="second_cup_side_collision" type="cylinder" size="0.023 0.045" mass="0.025" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.95 0.65 0.35" />
-            <geom name="second_cup_rim_collision" type="cylinder" size="0.03 0.004" pos="0 0 0.041" density="0" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.95 0.65 0.35" />
+            <geom name="second_cup_rim_collision" type="cylinder" size="0.023 0.004" pos="0 0 0.041" density="0" condim="6" friction="1.0 0.02 0.002" solref="0.01 1" rgba="0.55 0.95 0.65 0.35" />
             <geom name="second_cup_visual" type="cylinder" size="0.0235 0.0455" material="cup_material" contype="0" conaffinity="0" density="0" />
             <site name="second_cup_site" pos="0 0 0" size="0.006" rgba="0 1 0 0.5" />
             <body name="second_cup_tag36h11_00001" pos="-0.026 0 0" quat="0.7071067812 0 -0.7071067812 0">

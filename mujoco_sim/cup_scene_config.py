@@ -25,14 +25,15 @@ CUP_SCENE_METADATA_PATH = MODEL_DIR / "cup_scene_metadata.json"
 
 DEFAULT_CUP_RADIUS = 0.023
 DEFAULT_CUP_HALF_HEIGHT = 0.045
-DEFAULT_CUP_RIM_OVERHANG = 0.007
+DEFAULT_CUP_RIM_OVERHANG = 0.0
 DEFAULT_CUP_RIM_HALF_HEIGHT = 0.004
 DEFAULT_CUP_MASS = 0.025
 DEFAULT_CUP_FRICTION = (1.0, 0.02, 0.002)
 DEFAULT_JAW_FRICTION = (1.2, 0.005, 0.0005)
 
 CUP_TAG_SIZE = 0.024
-CUP_TAG_TO_CUP_CENTER_OFFSET = (0.0, 0.0, 0.026)
+CUP_TAG_MOUNT_DISTANCE_FROM_CENTER = 0.026
+CUP_TAG_TO_CUP_CENTER_OFFSET = (0.0, 0.0, 0.020)
 SIDE_MOUNTED_TAG_QUAT = (0.7071067812, 0.0, -0.7071067812, 0.0)
 
 WRIST_CAMERA_NAME = "wrist_cam"
@@ -85,7 +86,7 @@ PRIMARY_CUP = CupObjectSpec(
     tag=AprilTagSpec(
         tag_id=6,
         size_m=CUP_TAG_SIZE,
-        pos=(-CUP_TAG_TO_CUP_CENTER_OFFSET[2], 0.0, 0.0),
+        pos=(-CUP_TAG_MOUNT_DISTANCE_FROM_CENTER, 0.0, 0.0),
         quat=SIDE_MOUNTED_TAG_QUAT,
         name_prefix="cup_",
     ),
@@ -99,7 +100,7 @@ SECOND_CUP = CupObjectSpec(
     tag=AprilTagSpec(
         tag_id=1,
         size_m=CUP_TAG_SIZE,
-        pos=(-CUP_TAG_TO_CUP_CENTER_OFFSET[2], 0.0, 0.0),
+        pos=(-CUP_TAG_MOUNT_DISTANCE_FROM_CENTER, 0.0, 0.0),
         quat=SIDE_MOUNTED_TAG_QUAT,
         name_prefix="second_cup_",
     ),

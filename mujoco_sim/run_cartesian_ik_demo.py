@@ -10,7 +10,13 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from sim_env import STARTING_POSITION
-from so101_kinematics import SO101Kinematics, translated_pose
+from so101_kinematics import (
+    FIXED_JAW_TOOL_POINT,
+    SO101Kinematics,
+    gripperframe_pose_to_tool_target_pose,
+    tool_target_pose_to_gripperframe_pose,
+    translated_pose,
+)
 from so101_mujoco_utils import hold_position, move_to_pose, set_initial_pose
 
 
@@ -53,7 +59,7 @@ def sample_target_offset(rng: np.random.Generator) -> np.ndarray:
 
 def solve_random_target(
     kinematics: SO101Kinematics,
-    starting_ee_pose: np.ndarray,
+    starting_tool_pose: np.ndarray,
 ) -> tuple[np.ndarray, dict[str, float], np.ndarray, float]:
     rng = np.random.default_rng()
     best_error = float("inf")
@@ -61,7 +67,8 @@ def solve_random_target(
 
     for _ in range(MAX_TARGET_ATTEMPTS):
         target_offset = sample_target_offset(rng)
-        target_ee_pose = translated_pose(starting_ee_pose, target_offset)
+        target_tool_pose = translated_pose(starting_tool_pose, target_offset)
+        target_ee_pose = tool_target_pose_to_gripperframe_pose(target_tool_pose, FIXED_JAW_TOOL_POINT)
         target_position = kinematics.inverse_kinematics(
             STARTING_POSITION,
             target_ee_pose,
@@ -70,14 +77,15 @@ def solve_random_target(
             gripper=STARTING_POSITION["gripper"],
         )
         solved_pose = kinematics.forward_kinematics(target_position, frame="mujoco")
-        position_error = float(np.linalg.norm(target_ee_pose[:3, 3] - solved_pose[:3, 3]))
+        solved_tool_pose = gripperframe_pose_to_tool_target_pose(solved_pose, FIXED_JAW_TOOL_POINT)
+        position_error = float(np.linalg.norm(target_tool_pose[:3, 3] - solved_tool_pose[:3, 3]))
 
         if position_error < best_error:
             best_error = position_error
-            best_result = (target_ee_pose, target_position, target_offset, position_error)
+            best_result = (target_tool_pose, target_position, target_offset, position_error)
 
         if position_error <= IK_POSITION_TOLERANCE_M:
-            return target_ee_pose, target_position, target_offset, position_error
+            return target_tool_pose, target_position, target_offset, position_error
 
     if best_result is None:
         raise RuntimeError("Unable to generate a Cartesian IK target.")
@@ -89,10 +97,11 @@ def main():
     data = mujoco.MjData(model)
 
     kinematics = SO101Kinematics()
-    starting_ee_pose = kinematics.forward_kinematics(STARTING_POSITION, frame="mujoco")
-    target_ee_pose, target_position, target_offset, position_error = solve_random_target(
+    starting_gripperframe_pose = kinematics.forward_kinematics(STARTING_POSITION, frame="mujoco")
+    starting_tool_pose = gripperframe_pose_to_tool_target_pose(starting_gripperframe_pose, FIXED_JAW_TOOL_POINT)
+    target_tool_pose, target_position, target_offset, position_error = solve_random_target(
         kinematics,
-        starting_ee_pose,
+        starting_tool_pose,
     )
 
     print(f"Using kinematics backend: {kinematics.backend_name}")
@@ -102,6 +111,7 @@ def main():
         f"left/right y={target_offset[1]:.3f} m, "
         f"up z={target_offset[2]:.3f} m"
     )
+    print(f"IK tool point: {FIXED_JAW_TOOL_POINT}")
     print(f"IK position error: {position_error:.6f} m")
     print("Target joint position:")
     for joint, value in target_position.items():
@@ -110,7 +120,7 @@ def main():
     set_initial_pose(model, data, STARTING_POSITION)
 
     with mujoco.viewer.launch_passive(model, data) as viewer:
-        show_target(viewer, target_ee_pose)
+        show_target(viewer, target_tool_pose)
         hold_position(model, data, viewer, duration=1.0)
         move_to_pose(model, data, viewer, target_position, duration=3.0)
         hold_position(model, data, viewer, duration=3.0)

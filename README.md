@@ -291,7 +291,7 @@ Important pickup controls:
 - `--cup-position X Y Z` changes the configured cup pose before detection.
 - `--second-cup-position X Y Z` changes the configured second-cup pose before detection.
 - `--cup-radius`, `--cup-mass`, `--cup-friction`, `--jaw-friction`, and `--gripper-force` tune contact behavior.
-- `--first-waypoint-forward-offset` and `--first-waypoint-left-offset` tune the pregrasp waypoint computed from the detected cup center.
+- `--first-waypoint-clearance` tunes the pregrasp waypoint distance beyond the cup radius; forward and left offsets are computed as `cup_radius + clearance`.
 - `--cup-tag-id`, `--second-cup-tag-id`, `--cup-tag-size`, and `--tag-to-cup-center-offset X Y Z` describe the cup-mounted tags.
 - `--place-tag-id`, `--place-tag-size`, and `--place-tag-position X Y Z` describe the flat placement tag.
 - `--place-approach-height`, `--place-lateral-retreat`, `--place-success-xy-tolerance`, and `--place-success-z-tolerance` tune placement motion and success checks.
