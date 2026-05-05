@@ -243,11 +243,11 @@ The shared detector in `pose_estimation.py` can search multiple cameras, group d
 
 In the viewer, a green sphere marks the hover point estimated from vision, and a red sphere marks the equivalent hover point from the MuJoCo ground-truth tag site so you can compare estimate versus simulation truth. The default vision render is 2560 x 1920.
 
-## Run The Cup Pickup Test
+## Run The Cup Pick/Place/Stack Test
 
-`mujoco_sim/run_cup_pickup.py` loads `simulation_code/model/scene_cup.xml`, configures cup mass/friction/size, detects the cup-mounted AprilTag ID `6`, converts that tag pose to a green cup-center point, then moves through approach, pregrasp, close, squeeze, and lift stages. A blue marker shows the low pregrasp waypoint. The result prints pass/fail, cup height, and contact diagnostics.
+`mujoco_sim/run_cup_pickup.py` loads `simulation_code/model/scene_cup.xml`, configures cup mass/friction/size, detects the cup-mounted AprilTag ID `6`, and detects a flat placement AprilTag ID `0` on the table. By default it picks the first cup, places it on the flat tag, picks a second cup with mounted AprilTag ID `1`, then places the second cup on top of the first. A blue marker shows each low pregrasp waypoint. The result prints pass/fail for each pickup and placement stage.
 
-Run the visual pickup test:
+Run the visual sequence test:
 
 ```bash
 conda activate whisk-agent
@@ -261,6 +261,12 @@ Run without opening the viewer:
 python mujoco_sim/run_cup_pickup.py --headless
 ```
 
+Run only the original single-cup pickup:
+
+```bash
+python mujoco_sim/run_cup_pickup.py --sequence pickup --headless
+```
+
 Run the built-in parameter sweep over jaw friction, cup mass, and gripper force:
 
 ```bash
@@ -270,10 +276,13 @@ python mujoco_sim/run_cup_pickup.py --sweep
 Important pickup controls:
 
 - `--cup-position X Y Z` changes the configured cup pose before detection.
+- `--second-cup-position X Y Z` changes the configured second-cup pose before detection.
 - `--cup-radius`, `--cup-mass`, `--cup-friction`, `--jaw-friction`, and `--gripper-force` tune contact behavior.
 - `--first-waypoint-forward-offset` and `--first-waypoint-left-offset` tune the pregrasp waypoint computed from the detected cup center.
-- `--cup-tag-id`, `--cup-tag-size`, and `--tag-to-cup-center-offset X Y Z` describe the cup-mounted tag.
-- `--allow-config-cup-position-fallback` uses `--cup-position` if tag detection fails; without it, missing cup-tag detection is an error.
+- `--cup-tag-id`, `--second-cup-tag-id`, `--cup-tag-size`, and `--tag-to-cup-center-offset X Y Z` describe the cup-mounted tags.
+- `--place-tag-id`, `--place-tag-size`, and `--place-tag-position X Y Z` describe the flat placement tag.
+- `--place-approach-height`, `--place-lateral-retreat`, `--place-success-xy-tolerance`, and `--place-success-z-tolerance` tune placement motion and success checks.
+- `--allow-config-cup-position-fallback` uses configured cup/place tag positions if tag detection fails; without it, missing tag detection is an error.
 
 ## Troubleshooting
 
