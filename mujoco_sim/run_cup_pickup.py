@@ -36,9 +36,14 @@ DEFAULT_SWEEP_CUP_MASSES = (0.03, 0.045, 0.07)
 DEFAULT_SWEEP_GRIPPER_FORCES = (1.5, 2.0, 2.94)
 CUP_TAG_ID = 6
 CUP_TAG_SIZE = 0.024
-CUP_TAG_CAMERA_NAMES = ("table_observer", "cup_observer")
+WRIST_CAMERA_NAME = "wrist_cam"
+TOP_DOWN_CAMERA_NAME = "table_observer"
+CUP_TAG_CAMERA_NAMES = (WRIST_CAMERA_NAME, TOP_DOWN_CAMERA_NAME)
 CUP_DEBUG_FRAME_DIR = ROOT_DIR / "cup_camera_debug_frames"
-DEFAULT_TAG_TO_CUP_CENTER_OFFSET = (-0.067, 0.0, 0.026)
+DEFAULT_TAG_TO_CUP_CENTER_OFFSET = (0.0, 0.0, 0.026)
+CAMERA_FOV_VISUALIZATION_DISTANCE = 0.25
+CAMERA_FOV_VISUALIZATION_ASPECT = 4.0 / 3.0
+CAMERA_FOV_LINE_RADIUS = 0.001
 
 
 @dataclass(frozen=True)
@@ -69,6 +74,7 @@ class PickupConfig:
     success_lift_delta: float = 0.035
     cup_tag_id: int = CUP_TAG_ID
     cup_tag_size: float = CUP_TAG_SIZE
+    cup_tag_camera_names: tuple[str, ...] = CUP_TAG_CAMERA_NAMES
     tag_to_cup_center_offset: tuple[float, float, float] = DEFAULT_TAG_TO_CUP_CENTER_OFFSET
     debug_camera_frame_dir: Path | None = CUP_DEBUG_FRAME_DIR
     allow_config_position_fallback: bool = False
@@ -344,31 +350,86 @@ def solve_target(env: SimEnv, xyz: np.ndarray, gripper_position: float) -> dict[
     return plan.target_position
 
 
-def estimate_cup_center_from_tag(env: SimEnv, config: PickupConfig) -> tuple[np.ndarray, TagPoseEstimate | None]:
-    try:
-        estimates = detect_apriltags(
+def _format_xyz(position: np.ndarray) -> str:
+    return f"({position[0]:.4f}, {position[1]:.4f}, {position[2]:.4f})"
+
+
+def _camera_world_position(env: SimEnv, camera_name: str) -> np.ndarray | None:
+    camera_id = mujoco.mj_name2id(env.model, mujoco.mjtObj.mjOBJ_CAMERA, camera_name)
+    if camera_id < 0:
+        return None
+    return env.data.cam_xpos[camera_id].copy()
+
+
+def _detect_cup_tag_estimates(env: SimEnv, config: PickupConfig) -> list[TagPoseEstimate]:
+    camera_names = tuple(dict.fromkeys(camera_name for camera_name in config.cup_tag_camera_names if camera_name))
+    if not camera_names:
+        raise ValueError("At least one cup tag camera must be configured.")
+
+    estimates: list[TagPoseEstimate] = []
+    for camera_name in camera_names:
+        camera_estimates = detect_apriltags(
             env,
-            camera_name=CUP_TAG_CAMERA_NAMES[0],
+            camera_name=camera_name,
             tag_sizes={config.cup_tag_id: config.cup_tag_size},
-            camera_names=CUP_TAG_CAMERA_NAMES,
+            camera_names=(camera_name,),
             debug_frame_dir=config.debug_camera_frame_dir,
         )
+        estimate = camera_estimates.get(config.cup_tag_id)
+        if estimate is not None:
+            estimates.append(estimate)
+
+    return estimates
+
+
+def _estimate_for_offset_rotation(estimates: list[TagPoseEstimate]) -> TagPoseEstimate:
+    for estimate in estimates:
+        if estimate.camera_name == WRIST_CAMERA_NAME:
+            return estimate
+    return estimates[0]
+
+
+def _fuse_equal_weight_tag_estimates(estimates: list[TagPoseEstimate]) -> TagPoseEstimate:
+    if not estimates:
+        raise ValueError("Cannot fuse an empty list of tag estimates.")
+    if len(estimates) == 1:
+        return estimates[0]
+
+    rotation_source = _estimate_for_offset_rotation(estimates)
+    tag_ids = {estimate.tag_id for estimate in estimates}
+    if len(tag_ids) != 1:
+        raise ValueError(f"Cannot fuse mismatched tag IDs: {sorted(tag_ids)}")
+
+    return TagPoseEstimate(
+        tag_id=rotation_source.tag_id,
+        world_position=np.mean([estimate.world_position for estimate in estimates], axis=0),
+        world_rotation=rotation_source.world_rotation.copy(),
+        camera_position=rotation_source.camera_position.copy(),
+        pose_error=float(np.mean([estimate.pose_error for estimate in estimates])),
+        corners=rotation_source.corners.copy(),
+        camera_name="+".join(estimate.camera_name for estimate in estimates),
+    )
+
+
+def estimate_cup_center_from_tag(env: SimEnv, config: PickupConfig) -> tuple[np.ndarray, TagPoseEstimate | None]:
+    try:
+        estimates = _detect_cup_tag_estimates(env, config)
     except Exception as exc:
         if not config.allow_config_position_fallback:
             raise
         print(f"cup tag detection failed ({exc}); using configured cup position fallback")
         return np.array(config.cup_position, dtype=float), None
 
-    estimate = estimates.get(config.cup_tag_id)
-    if estimate is None:
+    if not estimates:
         if config.allow_config_position_fallback:
             print("cup tag not detected; using configured cup position fallback")
             return np.array(config.cup_position, dtype=float), None
         raise RuntimeError(
             f"Cup AprilTag {config.cup_tag_id} was not detected from cameras: "
-            + ", ".join(CUP_TAG_CAMERA_NAMES)
+            + ", ".join(config.cup_tag_camera_names)
         )
 
+    estimate = _fuse_equal_weight_tag_estimates(estimates)
     tag_to_cup_center = np.asarray(config.tag_to_cup_center_offset, dtype=float)
     if tag_to_cup_center.shape != (3,):
         raise ValueError("tag_to_cup_center_offset must contain exactly three values.")
@@ -376,10 +437,21 @@ def estimate_cup_center_from_tag(env: SimEnv, config: PickupConfig) -> tuple[np.
     green_center = estimate.world_position + estimate.world_rotation @ tag_to_cup_center
     print(
         "cup tag: "
-        f"id={estimate.tag_id} camera={estimate.camera_name} "
-        f"tag=({estimate.world_position[0]:.4f}, {estimate.world_position[1]:.4f}, {estimate.world_position[2]:.4f}) m "
-        f"green_center=({green_center[0]:.4f}, {green_center[1]:.4f}, {green_center[2]:.4f}) m"
+        f"id={estimate.tag_id} cameras={estimate.camera_name} "
+        f"tag={_format_xyz(estimate.world_position)} m "
+        f"green_center={_format_xyz(green_center)} m"
     )
+    if len(estimates) > 1:
+        print(f"  fused {len(estimates)} camera estimates with equal weights")
+    for contributor in estimates:
+        camera_position = _camera_world_position(env, contributor.camera_name)
+        camera_position_text = "unavailable" if camera_position is None else _format_xyz(camera_position)
+        print(
+            f"  camera={contributor.camera_name} "
+            f"camera_pos={camera_position_text} m "
+            f"tag={_format_xyz(contributor.world_position)} m "
+            f"error={contributor.pose_error:.6f}"
+        )
     return green_center, estimate
 
 
@@ -404,31 +476,118 @@ def estimate_cup_target_points(env: SimEnv, config: PickupConfig) -> CupTargetPo
     return target_points_from_cup_center(green_center, config, tag_estimate)
 
 
-def show_cup_target_points(
+def _add_debug_sphere(
+    viewer: mujoco.viewer.Handle,
+    geom_index: int,
+    position: np.ndarray,
+    radius: float,
+    rgba: list[float],
+) -> int:
+    mujoco.mjv_initGeom(
+        viewer.user_scn.geoms[geom_index],
+        type=mujoco.mjtGeom.mjGEOM_SPHERE,
+        size=[radius, 0.0, 0.0],
+        pos=position,
+        mat=np.eye(3).flatten(),
+        rgba=rgba,
+    )
+    return geom_index + 1
+
+
+def _add_debug_line(
+    viewer: mujoco.viewer.Handle,
+    geom_index: int,
+    start: np.ndarray,
+    end: np.ndarray,
+    rgba: list[float],
+    radius: float = CAMERA_FOV_LINE_RADIUS,
+) -> int:
+    mujoco.mjv_initGeom(
+        viewer.user_scn.geoms[geom_index],
+        type=mujoco.mjtGeom.mjGEOM_CAPSULE,
+        size=[radius, 0.0, 0.0],
+        pos=np.zeros(3),
+        mat=np.eye(3).flatten(),
+        rgba=rgba,
+    )
+    mujoco.mjv_connector(
+        viewer.user_scn.geoms[geom_index],
+        mujoco.mjtGeom.mjGEOM_CAPSULE,
+        radius,
+        start,
+        end,
+    )
+    viewer.user_scn.geoms[geom_index].rgba[:] = rgba
+    return geom_index + 1
+
+
+def _camera_frustum_corners(
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    camera_id: int,
+    distance: float = CAMERA_FOV_VISUALIZATION_DISTANCE,
+    aspect: float = CAMERA_FOV_VISUALIZATION_ASPECT,
+) -> tuple[np.ndarray, np.ndarray]:
+    camera_position = data.cam_xpos[camera_id].copy()
+    camera_rotation = data.cam_xmat[camera_id].reshape(3, 3).copy()
+    half_height = distance * math.tan(0.5 * math.radians(float(model.cam_fovy[camera_id])))
+    half_width = half_height * aspect
+    local_corners = np.array(
+        [
+            [-half_width, -half_height, -distance],
+            [half_width, -half_height, -distance],
+            [half_width, half_height, -distance],
+            [-half_width, half_height, -distance],
+        ],
+        dtype=float,
+    )
+    return camera_position, camera_position + local_corners @ camera_rotation.T
+
+
+def _add_camera_fov_overlays(
+    viewer: mujoco.viewer.Handle,
+    env: SimEnv,
+    geom_index: int,
+    camera_names: tuple[str, ...] = CUP_TAG_CAMERA_NAMES,
+) -> int:
+    camera_rgba = [1.0, 0.65, 0.0, 0.85]
+    frustum_rgba = [1.0, 0.65, 0.0, 0.45]
+    forward_rgba = [1.0, 0.25, 0.0, 0.7]
+
+    for camera_name in camera_names:
+        camera_id = mujoco.mj_name2id(env.model, mujoco.mjtObj.mjOBJ_CAMERA, camera_name)
+        if camera_id < 0:
+            continue
+
+        camera_position, corners = _camera_frustum_corners(env.model, env.data, camera_id)
+        geom_index = _add_debug_sphere(viewer, geom_index, camera_position, 0.008, camera_rgba)
+
+        center = np.mean(corners, axis=0)
+        geom_index = _add_debug_line(viewer, geom_index, camera_position, center, forward_rgba, radius=0.0015)
+
+        for corner in corners:
+            geom_index = _add_debug_line(viewer, geom_index, camera_position, corner, frustum_rgba)
+        for start, end in zip(corners, np.roll(corners, shift=-1, axis=0), strict=True):
+            geom_index = _add_debug_line(viewer, geom_index, start, end, frustum_rgba)
+
+    return geom_index
+
+
+def show_viewer_debug_overlays(
     viewer: mujoco.viewer.Handle | None,
+    env: SimEnv,
     green_center: np.ndarray,
     blue_pregrasp: np.ndarray,
+    camera_names: tuple[str, ...] = CUP_TAG_CAMERA_NAMES,
 ) -> None:
     if viewer is None:
         return
 
-    mujoco.mjv_initGeom(
-        viewer.user_scn.geoms[0],
-        type=mujoco.mjtGeom.mjGEOM_SPHERE,
-        size=[0.010, 0.0, 0.0],
-        pos=green_center,
-        mat=np.eye(3).flatten(),
-        rgba=[0.0, 1.0, 0.0, 0.55],
-    )
-    mujoco.mjv_initGeom(
-        viewer.user_scn.geoms[1],
-        type=mujoco.mjtGeom.mjGEOM_SPHERE,
-        size=[0.008, 0.0, 0.0],
-        pos=blue_pregrasp,
-        mat=np.eye(3).flatten(),
-        rgba=[0.0, 0.2, 1.0, 0.75],
-    )
-    viewer.user_scn.ngeom = 2
+    geom_index = 0
+    geom_index = _add_debug_sphere(viewer, geom_index, green_center, 0.010, [0.0, 1.0, 0.0, 0.55])
+    geom_index = _add_debug_sphere(viewer, geom_index, blue_pregrasp, 0.008, [0.0, 0.2, 1.0, 0.75])
+    geom_index = _add_camera_fov_overlays(viewer, env, geom_index, camera_names)
+    viewer.user_scn.ngeom = geom_index
     viewer.sync()
 
 
@@ -445,7 +604,7 @@ def execute_pickup(
     lift_xyz = pregrasp_xyz + np.array([0.0, 0.0, config.lift_height], dtype=float)
 
     initial_cup_z = float(env.data.xpos[diagnostics.cup_body_id, 2])
-    show_cup_target_points(viewer, target_points.green_center, pregrasp_xyz)
+    show_viewer_debug_overlays(viewer, env, target_points.green_center, pregrasp_xyz, config.cup_tag_camera_names)
 
     approach_position = solve_target(env, approach_xyz, OPEN_GRIPPER)
     if not command_motion(env, approach_position, config.approach_duration, diagnostics, viewer, realtime):
@@ -548,6 +707,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cup-tag-id", type=int, default=CUP_TAG_ID, help="AprilTag ID mounted on the cup.")
     parser.add_argument("--cup-tag-size", type=float, default=CUP_TAG_SIZE, help="Black-square size of the cup AprilTag in meters.")
     parser.add_argument(
+        "--cup-tag-cameras",
+        nargs="+",
+        default=list(CUP_TAG_CAMERA_NAMES),
+        metavar="CAMERA",
+        help="Named MuJoCo cameras to use for cup tag detection; visible estimates are fused equally.",
+    )
+    parser.add_argument(
         "--tag-to-cup-center-offset",
         type=float,
         nargs=3,
@@ -600,6 +766,7 @@ def config_from_args(
         lift_height=args.lift_height,
         cup_tag_id=args.cup_tag_id,
         cup_tag_size=args.cup_tag_size,
+        cup_tag_camera_names=tuple(args.cup_tag_cameras),
         tag_to_cup_center_offset=tuple(args.tag_to_cup_center_offset),
         debug_camera_frame_dir=None if args.no_debug_camera_frames else args.debug_camera_frame_dir,
         allow_config_position_fallback=args.allow_config_cup_position_fallback,
